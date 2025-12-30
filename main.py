@@ -33,7 +33,7 @@ def creer_fichier_nettoye(fichier_source, fichier_sortie="data_clean.csv"):
     
     # 2. Sélection des variables à garder
     print("2. SÉLECTION DES VARIABLES")
-    variables_a_garder = ['age', 'meno', 'size', 'grade', 'hormon', 'chemo', 'recur', 'death']
+    variables_a_garder = ['age', 'meno', 'size', 'grade', 'hormon', 'chemo', 'recur']
     
     # Vérifier que toutes les colonnes existent
     colonnes_manquantes = [col for col in variables_a_garder if col not in df.columns]
