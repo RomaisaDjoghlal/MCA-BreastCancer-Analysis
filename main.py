@@ -2,1250 +2,1057 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from mpl_toolkits.mplot3d import Axes3D
 from sklearn.decomposition import PCA
 import warnings
+import os
+from pathlib import Path
 warnings.filterwarnings('ignore')
 
-# Configuration graphique
 plt.rcParams['figure.figsize'] = (12, 8)
 plt.rcParams['font.size'] = 10
 sns.set_style("whitegrid")
 
-class ACM_Cours:
+# ============================================================================
+# PARTIE 1: CRÉATION FICHIER NETTOYÉ
+# ============================================================================
+
+def creer_fichier_nettoye(fichier_source, fichier_sortie="data_clean.csv"):
     """
-    ACM (Analyse des Correspondances Multiples) conforme au cours
-    Toutes les variables (même quantitatives) sont transformées en qualitatives
+    Crée un nouveau fichier avec seulement les variables nécessaires et nettoyées
     """
+    print("="*80)
+    print("CRÉATION FICHIER DE DONNÉES NETTOYÉ")
+    print("="*80 + "\n")
     
-    def __init__(self, data, vars_quanti, vars_quali):
-        """
-        Paramètres:
-        -----------
-        data : DataFrame - données complètes
-        vars_quanti : list - variables quantitatives (seront discrétisées)
-        vars_quali : list - variables qualitatives
-        """
+    # 1. Chargement
+    print("1. CHARGEMENT FICHIER SOURCE")
+    df = pd.read_csv(fichier_source)
+    print(f"✓ Fichier chargé: {fichier_source}")
+    print(f"✓ Dimensions initiales: {df.shape}")
+    print(f"✓ Colonnes disponibles: {list(df.columns)}\n")
+    
+    # 2. Sélection des variables à garder
+    print("2. SÉLECTION DES VARIABLES")
+    variables_a_garder = ['age', 'meno', 'size', 'grade', 'hormon', 'chemo', 'recur', 'death']
+    
+    # Vérifier que toutes les colonnes existent
+    colonnes_manquantes = [col for col in variables_a_garder if col not in df.columns]
+    if colonnes_manquantes:
+        print(f"⚠ ATTENTION: Colonnes manquantes: {colonnes_manquantes}")
+        variables_a_garder = [col for col in variables_a_garder if col in df.columns]
+    
+    df_clean = df[variables_a_garder].copy()
+    print(f"✓ Variables conservées: {variables_a_garder}")
+    print(f"✓ Nouvelles dimensions: {df_clean.shape}\n")
+    
+    # 3. Analyse des valeurs manquantes
+    print("3. VALEURS MANQUANTES")
+    missing = df_clean.isnull().sum()
+    if missing.sum() > 0:
+        missing_df = pd.DataFrame({
+            'Nombre': missing[missing > 0], 
+            'Pourcentage': (missing[missing > 0]/len(df_clean)*100).round(2)
+        })
+        print(missing_df)
+        print()
+    else:
+        print("✓ Aucune valeur manquante\n")
+    
+    # 4. Imputation des valeurs manquantes
+    print("4. IMPUTATION DES VALEURS MANQUANTES")
+    n_imputed = 0
+    for col in df_clean.columns:
+        if df_clean[col].isnull().any():
+            if df_clean[col].dtype in ['int64', 'float64']:
+                val = df_clean[col].median()
+                df_clean[col].fillna(val, inplace=True)
+                print(f"  ✓ {col}: médiane = {val:.2f}")
+                n_imputed += 1
+            else:
+                val = df_clean[col].mode()[0]
+                df_clean[col].fillna(val, inplace=True)
+                print(f"  ✓ {col}: mode = {val}")
+                n_imputed += 1
+    
+    if n_imputed == 0:
+        print("  ✓ Aucune imputation nécessaire")
+    print()
+    
+    # 5. Analyse des outliers pour age
+    if 'age' in df_clean.columns:
+        print("5. ANALYSE OUTLIERS (AGE)")
+        Q1, Q3 = df_clean['age'].quantile([0.25, 0.75])
+        IQR = Q3 - Q1
+        lower, upper = Q1 - 1.5*IQR, Q3 + 1.5*IQR
+        outliers = df_clean[(df_clean['age'] < lower) | (df_clean['age'] > upper)]
+        print(f"  Bornes IQR: [{lower:.1f}, {upper:.1f}]")
+        print(f"  Outliers détectés: {len(outliers)} ({len(outliers)/len(df_clean)*100:.1f}%)")
+        print("  → Conservés (données médicales réelles)\n")
+        
+        # Statistiques age
+        print("6. STATISTIQUES AGE")
+        print(df_clean['age'].describe())
+        print()
+    
+    # 6. Vérification finale
+    print("7. VÉRIFICATION FINALE")
+    print(f"✓ Dimensions finales: {df_clean.shape}")
+    print(f"✓ Valeurs manquantes: {df_clean.isnull().sum().sum()}")
+    print(f"✓ Lignes complètes: {df_clean.dropna().shape[0]}")
+    print()
+    
+    # 7. Affichage des premières lignes
+    print("8. APERÇU DES DONNÉES")
+    print(df_clean.head(10))
+    print()
+    
+    # 8. Distribution des variables qualitatives
+    print("9. DISTRIBUTION DES VARIABLES QUALITATIVES")
+    print("-"*80)
+    for col in df_clean.columns:
+        if col != 'age' and df_clean[col].dtype in ['int64', 'float64', 'object']:
+            print(f"\n{col.upper()}:")
+            print(df_clean[col].value_counts().sort_index())
+    print()
+    
+    # 9. Sauvegarde
+    print("10. SAUVEGARDE")
+    df_clean.to_csv(fichier_sortie, index=False)
+    print(f"✓ Fichier sauvegardé: {fichier_sortie}")
+    print(f"✓ {len(df_clean)} lignes × {len(df_clean.columns)} colonnes")
+    
+    print("\n" + "="*80)
+    print("✓ FICHIER NETTOYÉ CRÉÉ AVEC SUCCÈS")
+    print("="*80 + "\n")
+    
+    return df_clean
+
+
+# ============================================================================
+# PARTIE 2: CLASSE ACM COMPLÈTE AVEC CORRECTION BENZÉCRI
+# ============================================================================
+
+class ACM_BreastCancer:
+    
+    def __init__(self, data, dossier="graphes"):
         self.data = data.copy()
-        self.vars_quanti_orig = vars_quanti
-        self.vars_quali_orig = vars_quali
-        self.n = len(data)  # n individus
+        self.n = len(data)
+        self.dossier = dossier
+        self._creer_dossiers()
+        
+        # Variables qualitatives (tout sauf age)
+        self.vars_quali = [col for col in data.columns if col != 'age']
         
         print("="*80)
-        print("INITIALISATION DE L'ACM CONFORME AU COURS")
+        print("ACM - ROTTERDAM BREAST CANCER")
         print("="*80)
-        print(f"Nombre d'individus (n): {self.n}")
-        print(f"Variables quantitatives à discrétiser: {vars_quanti}")
-        print(f"Variables qualitatives: {vars_quali}")
-        print()
+        print(f"n = {self.n} individus")
+        print(f"Variable quantitative: age")
+        print(f"Variables qualitatives: {len(self.vars_quali)}")
+        print(f"Liste: {self.vars_quali}")
+        print(f"Dossier graphiques: {self.dossier}/\n")
     
-    def discretiser_variables(self, methode='quantiles', n_classes=4):
-        """
-        Discrétise les variables quantitatives en catégories
-        """
+    def _creer_dossiers(self):
+        """Créer structure dossiers pour tous les graphiques"""
+        dossiers = [
+            self.dossier,
+            f"{self.dossier}/00_Benzecri",
+            f"{self.dossier}/01_Scree_Plot",
+            f"{self.dossier}/02_Graphe_par_variable",
+            f"{self.dossier}/03_Biplot",
+            f"{self.dossier}/04_Ind_Ctr",
+            f"{self.dossier}/05_Ind_cos",
+            f"{self.dossier}/06_Modalite_cos",
+            f"{self.dossier}/07_Mod_Ctr",
+            f"{self.dossier}/08_Modalite_contribution",
+            f"{self.dossier}/09_Cercle_correlation",
+            f"{self.dossier}/10_Histogrammes",
+            f"{self.dossier}/11_Biplot_complet",
+            f"{self.dossier}/12_Contributions_individus"
+        ]
+        for d in dossiers:
+            Path(d).mkdir(parents=True, exist_ok=True)
+    
+    def discretiser_age(self, n_classes=4):
+        """Discrétise age en quartiles"""
         print("="*80)
-        print("DISCRÉTISATION DES VARIABLES QUANTITATIVES")
-        print("="*80)
-        print(f"Méthode: {methode}")
-        print(f"Nombre de classes: {n_classes}\n")
+        print("DISCRÉTISATION AGE")
+        print("="*80 + "\n")
         
-        self.data_discretisee = self.data.copy()
-        self.info_discretisation = {}
+        self.data_disc = self.data.copy()
         
-        for var in self.vars_quanti_orig:
-            print(f"Discrétisation de '{var}'...")
+        if 'age' in self.data.columns:
+            self.data_disc['age_cat'], bins = pd.qcut(
+                self.data['age'], q=n_classes,
+                labels=[f'Q{i+1}' for i in range(n_classes)],
+                retbins=True, duplicates='drop'
+            )
             
-            try:
-                if methode == 'quantiles':
-                    self.data_discretisee[f'{var}_cat'], bins = pd.qcut(
-                        self.data[var], 
-                        q=n_classes, 
-                        labels=[f'Q{i+1}' for i in range(n_classes)],
-                        retbins=True,
-                        duplicates='drop'
-                    )
-                elif methode == 'equal_width':
-                    self.data_discretisee[f'{var}_cat'], bins = pd.cut(
-                        self.data[var], 
-                        bins=n_classes, 
-                        labels=[f'C{i+1}' for i in range(n_classes)],
-                        retbins=True
-                    )
-                
-                if self.data_discretisee[f'{var}_cat'].isna().any():
-                    print(f"  ⚠️  Valeurs manquantes - remplissage avec mode")
-                    mode_val = self.data_discretisee[f'{var}_cat'].mode()[0]
-                    self.data_discretisee[f'{var}_cat'].fillna(mode_val, inplace=True)
-                    
-            except Exception as e:
-                print(f"  ❌ ERREUR: {e}")
-                print(f"  Tentative avec 'equal_width'...")
-                self.data_discretisee[f'{var}_cat'], bins = pd.cut(
-                    self.data[var], 
-                    bins=n_classes, 
-                    labels=[f'C{i+1}' for i in range(n_classes)],
-                    retbins=True
-                )
+            print(f"Classes: {n_classes}")
+            print("Bornes:")
+            for i in range(len(bins)-1):
+                print(f"  Q{i+1}: [{bins[i]:.1f}, {bins[i+1]:.1f}]")
             
-            self.info_discretisation[var] = {
-                'bins': bins,
-                'n_classes': n_classes,
-                'nom_categoriel': f'{var}_cat'
-            }
+            print("\nDistribution:")
+            print(self.data_disc['age_cat'].value_counts().sort_index())
             
-            print(f"  Bornes: {[f'{b:.2f}' for b in bins]}")
-            print(f"  Distribution:")
-            print(self.data_discretisee[f'{var}_cat'].value_counts().sort_index())
-            print()
+            self.vars_toutes = self.vars_quali + ['age_cat']
+        else:
+            print("⚠ Variable 'age' non trouvée, pas de discrétisation")
+            self.vars_toutes = self.vars_quali
         
-        vars_discretisees = [self.info_discretisation[var]['nom_categoriel'] 
-                            for var in self.vars_quanti_orig]
-        self.vars_quali_toutes = self.vars_quali_orig + vars_discretisees
-        
-        # p = nombre de variables qualitatives
-        self.p = len(self.vars_quali_toutes)
-        
-        print(f"✓ {len(self.vars_quanti_orig)} variables quantitatives discrétisées")
-        print(f"✓ Total p = {self.p} variables qualitatives pour l'ACM")
-        print()
+        self.p = len(self.vars_toutes)
+        print(f"\n✓ p = {self.p} variables pour l'ACM\n")
     
     def prepare_acm(self):
-        """
-        Prépare les données pour l'ACM selon le cours:
-        1. Codage disjonctif complet (TDC)
-        2. Calcul des effectifs et fréquences
-        """
+        """Tableau Disjonctif Complet"""
         print("="*80)
-        print("PRÉPARATION - TABLEAU DISJONCTIF COMPLET (TDC)")
-        print("="*80)
+        print("TABLEAU DISJONCTIF COMPLET")
+        print("="*80 + "\n")
         
-        # 1. Codage disjonctif complet
-        print("\n1. Construction du TDC...")
-        dummies_list = []
-        self.modalites_info = {}
+        dummies = []
+        self.mod_info = {}
         
-        for var in self.vars_quali_toutes:
-            var_dummies = pd.get_dummies(
-                self.data_discretisee[var],
-                prefix=var,
-                prefix_sep='_'
-            )
-            dummies_list.append(var_dummies)
-            
-            modalites = self.data_discretisee[var].unique()
-            self.modalites_info[var] = {
-                'modalites': list(modalites),
-                'm_j': len(modalites),  # nombre de modalités
-                'colonnes': list(var_dummies.columns)
+        for var in self.vars_toutes:
+            d = pd.get_dummies(self.data_disc[var], prefix=var, prefix_sep='_')
+            dummies.append(d)
+            self.mod_info[var] = {
+                'modalites': list(self.data_disc[var].unique()),
+                'm_j': len(d.columns),
+                'colonnes': list(d.columns)
             }
         
-        self.X = pd.concat(dummies_list, axis=1)  # Tableau disjonctif complet
+        self.X = pd.concat(dummies, axis=1)
+        self.J = sum([self.mod_info[v]['m_j'] for v in self.vars_toutes])
+        self.n_j = self.X.sum(axis=0)
+        self.I_tot = self.J / self.p - 1
         
-        # 2. Calcul de J (nombre total de modalités)
-        self.J = sum([self.modalites_info[var]['m_j'] for var in self.vars_quali_toutes])
-        
-        # 3. Effectifs des modalités (n_j)
-        self.n_j = self.X.sum(axis=0)  # effectif de chaque modalité
-        
-        print(f"✓ TDC construit: {self.X.shape}")
-        print(f"  - n = {self.n} individus")
-        print(f"  - p = {self.p} variables qualitatives")
-        print(f"  - J = {self.J} modalités totales")
-        print(f"\n  Nombre de modalités par variable:")
-        for var in self.vars_quali_toutes:
-            print(f"    {var}: m_j = {self.modalites_info[var]['m_j']}")
-        
-        # 4. Calcul de l'inertie totale théorique
-        self.I_totale_theorique = self.J / self.p - 1
-        print(f"\n✓ Inertie totale théorique: I = J/p - 1 = {self.J}/{self.p} - 1 = {self.I_totale_theorique:.4f}")
-        print()
+        print(f"TDC: {self.X.shape}")
+        print(f"  n = {self.n} individus")
+        print(f"  p = {self.p} variables")
+        print(f"  J = {self.J} modalités")
+        print(f"  Inertie totale = {self.I_tot:.4f}\n")
     
-    def compute_acm(self, n_components=5):
-        """
-        Calcule l'ACM via ACP du tableau disjonctif standardisé
-        Selon le cours: on applique une ACP sur X avec poids 1/n pour individus
-        et pondération 1/sqrt(m_j) pour variables
-        """
+    def compute_acm(self, n_comp=5):
+        """Calcul ACM"""
         print("="*80)
-        print("CALCUL DE L'ACM")
-        print("="*80)
+        print("CALCUL ACM")
+        print("="*80 + "\n")
         
-        # Nombre maximum d'axes
+        # Pondération
+        X_pond = self.X.copy()
+        for var in self.vars_toutes:
+            m_j = self.mod_info[var]['m_j']
+            cols = self.mod_info[var]['colonnes']
+            X_pond[cols] = X_pond[cols] / np.sqrt(m_j)
+        
+        # ACP du tableau pondéré
         self.r = min(self.n - 1, self.J - self.p)
-        print(f"\nNombre maximum d'axes: r = min(n-1, J-p) = min({self.n-1}, {self.J-self.p}) = {self.r}")
-        print(f"Nombre d'axes demandés: {n_components}")
+        n_comp = min(n_comp, self.r)
         
-        # Pondération des colonnes par 1/sqrt(m_j)
-        X_pondere = self.X.copy()
-        for var in self.vars_quali_toutes:
-            m_j = self.modalites_info[var]['m_j']
-            cols = self.modalites_info[var]['colonnes']
-            X_pondere[cols] = X_pondere[cols] / np.sqrt(m_j)
-        
-        # ACP sur tableau pondéré
-        n_comp = min(n_components, self.r)
         self.pca = PCA(n_components=n_comp)
-        self.F = self.pca.fit_transform(X_pondere)  # Coordonnées individus F_s(i)
-        
-        # Valeurs propres
+        self.F = self.pca.fit_transform(X_pond)
         self.lambda_k = self.pca.explained_variance_
-        
-        # Coordonnées des modalités G_s(j)
         self.G = self.pca.components_.T * np.sqrt(self.lambda_k)
         
-        # Création des DataFrames pour faciliter l'utilisation
-        self.coord_individus = pd.DataFrame(
-            self.F,
-            columns=[f'Axe{k+1}' for k in range(n_comp)],
+        # DataFrames
+        self.coord_ind = pd.DataFrame(
+            self.F, columns=[f'Axe{k+1}' for k in range(n_comp)],
             index=self.data.index
         )
-        
-        self.coord_modalites = pd.DataFrame(
-            self.G,
-            columns=[f'Axe{k+1}' for k in range(n_comp)],
-            index=X_pondere.columns
+        self.coord_mod = pd.DataFrame(
+            self.G, columns=[f'Axe{k+1}' for k in range(n_comp)],
+            index=X_pond.columns
         )
         
-        # Calcul des inerties
-        self._calculer_inerties()
-        
-        print("\n" + "="*60)
-        print("VALEURS PROPRES ET INERTIES")
-        print("="*60)
-        print(f"{'Axe':<8} {'λ_k':<12} {'% Inertie':<12} {'% Cumulé':<12}")
-        print("-"*60)
-        for k in range(len(self.lambda_k)):
-            print(f"Axe {k+1:<4} {self.lambda_k[k]:<12.4f} {self.inertie_pct[k]:<12.2f} {self.inertie_cum[k]:<12.2f}")
-        
-        print("\n" + "="*60)
-        print("SEUILS IMPORTANTS (selon cours)")
-        print("="*60)
-        print(f"Seuil moyen: λ̄ = 1/p = 1/{self.p} = {1/self.p:.4f}")
-        print(f"Maximum théorique par axe: p/(J-p) = {self.p}/{self.J-self.p} = {self.p/(self.J-self.p):.4f}")
-        print(f"→ Axes à retenir: ceux avec λ_k > {1/self.p:.4f}")
-        print("="*60 + "\n")
-    
-    def _calculer_inerties(self):
-        """Calcul des différentes inerties selon le cours"""
-        
-        # Inertie brute (% sur inertie totale)
-        self.inertie_pct = (self.lambda_k / self.I_totale_theorique) * 100
+        # Inerties
+        self.inertie_pct = (self.lambda_k / self.I_tot) * 100
         self.inertie_cum = np.cumsum(self.inertie_pct)
         
-        # Nombre d'axes significatifs (λ > 1/p)
-        seuil = 1 / self.p
-        self.axes_significatifs = np.where(self.lambda_k > seuil)[0]
-        self.s = len(self.axes_significatifs)
+        print("Valeurs propres:")
+        for k in range(len(self.lambda_k)):
+            print(f"  Axe {k+1}: λ={self.lambda_k[k]:.4f} ({self.inertie_pct[k]:.2f}%)")
+        print()
+    
+    def correction_benzecri(self):
+        """Applique la correction de Benzécri"""
+        print("="*80)
+        print("CORRECTION DE BENZÉCRI")
+        print("="*80 + "\n")
         
-        print(f"\nAxes significatifs (λ > 1/p = {seuil:.4f}): {self.s} axes")
+        # Valeurs propres corrigées
+        self.lambda_corr = np.zeros_like(self.lambda_k)
         
-        # Correction de Benzécri
-        self.lambda_benzecri = np.array([
-            ((self.p / (self.p - 1)) * (lam - 1/self.p))**2 
-            if lam > 1/self.p else 0
-            for lam in self.lambda_k
-        ])
+        for k in range(len(self.lambda_k)):
+            if self.lambda_k[k] > 1/self.p:
+                self.lambda_corr[k] = ((self.p / (self.p - 1)) * 
+                                       (self.lambda_k[k] - 1/self.p))**2
+            else:
+                self.lambda_corr[k] = 0
         
-        self.S_B = np.sum(self.lambda_benzecri)
-        self.inertie_benzecri = (self.lambda_benzecri / self.S_B) * 100
-        self.inertie_benzecri_cum = np.cumsum(self.inertie_benzecri)
+        # Inertie corrigée
+        self.I_corr = np.sum(self.lambda_corr)
+        self.inertie_corr_pct = (self.lambda_corr / self.I_corr) * 100
+        self.inertie_corr_cum = np.cumsum(self.inertie_corr_pct)
         
-        # Correction de Greenacre
-        somme_lambda2 = np.sum(self.lambda_k**2)
-        self.S_G = (self.p / (self.p - 1)) * (somme_lambda2 - (self.J - self.p) / (self.p**2))
-        self.inertie_greenacre = (self.lambda_benzecri / self.S_G) * 100
-        self.inertie_greenacre_cum = np.cumsum(self.inertie_greenacre)
+        print("Valeurs propres corrigées:")
+        print(f"Seuil 1/p = {1/self.p:.4f}\n")
+        
+        for k in range(len(self.lambda_k)):
+            print(f"Axe {k+1}:")
+            print(f"  λ original  = {self.lambda_k[k]:.4f}")
+            print(f"  λ corrigé   = {self.lambda_corr[k]:.4f}")
+            print(f"  % inertie   = {self.inertie_corr_pct[k]:.2f}%")
+            print(f"  % cumulé    = {self.inertie_corr_cum[k]:.2f}%")
+            print()
+        
+        print(f"Inertie totale corrigée: {self.I_corr:.4f}\n")
     
     def compute_contributions(self):
-        """Calcul des contributions et cos² selon le cours"""
+        """Contributions et Cos²"""
         print("="*80)
-        print("CONTRIBUTIONS ET QUALITÉS DE REPRÉSENTATION")
-        print("="*80)
+        print("CONTRIBUTIONS ET COS²")
+        print("="*80 + "\n")
         
         n_axes = len(self.lambda_k)
         
-        # 1. CONTRIBUTIONS DES INDIVIDUS (formule cours: Ctr_k(i) = F_k(i)² / (n*λ_k))
-        self.ctr_individus = pd.DataFrame(index=self.data.index)
+        # Contributions individus
+        self.ctr_ind = pd.DataFrame(index=self.data.index)
         for k in range(n_axes):
-            self.ctr_individus[f'Axe{k+1}'] = (self.F[:, k]**2) / (self.n * self.lambda_k[k]) * 100
+            self.ctr_ind[f'Axe{k+1}'] = (
+                (self.F[:, k]**2) / (self.n * self.lambda_k[k]) * 100
+            )
         
-        # 2. CONTRIBUTIONS DES MODALITÉS (formule cours: Ctr_k(j) = (n_j/np) * G_k(j)² / λ_k)
-        self.ctr_modalites = pd.DataFrame(index=self.coord_modalites.index)
+        # Contributions modalités
+        self.ctr_mod = pd.DataFrame(index=self.coord_mod.index)
         for k in range(n_axes):
-            self.ctr_modalites[f'Axe{k+1}'] = (
+            self.ctr_mod[f'Axe{k+1}'] = (
                 (self.n_j / (self.n * self.p)) * (self.G[:, k]**2) / self.lambda_k[k]
             ) * 100
         
-        # 3. COS² DES INDIVIDUS
-        distance_ind = np.sum(self.F**2, axis=1)
-        self.cos2_individus = pd.DataFrame(index=self.data.index)
+        # Cos² individus
+        dist_ind = np.sum(self.F**2, axis=1)
+        self.cos2_ind = pd.DataFrame(index=self.data.index)
         for k in range(n_axes):
-            self.cos2_individus[f'Axe{k+1}'] = self.F[:, k]**2 / distance_ind
+            self.cos2_ind[f'Axe{k+1}'] = self.F[:, k]**2 / dist_ind
         
-        # 4. COS² DES MODALITÉS
-        distance_mod = np.sum(self.G**2, axis=1)
-        self.cos2_modalites = pd.DataFrame(index=self.coord_modalites.index)
+        # Cos² modalités
+        dist_mod = np.sum(self.G**2, axis=1)
+        self.cos2_mod = pd.DataFrame(index=self.coord_mod.index)
         for k in range(n_axes):
-            self.cos2_modalites[f'Axe{k+1}'] = self.G[:, k]**2 / distance_mod
+            self.cos2_mod[f'Axe{k+1}'] = self.G[:, k]**2 / dist_mod
         
-        # 5. CONTRIBUTIONS DES VARIABLES (somme des contributions de ses modalités)
-        self.ctr_variables = pd.DataFrame(
-            index=self.vars_quali_toutes,
-            columns=[f'Axe{k+1}' for k in range(n_axes)]
-        )
-        for var in self.vars_quali_toutes:
-            cols = self.modalites_info[var]['colonnes']
-            for k in range(n_axes):
-                self.ctr_variables.loc[var, f'Axe{k+1}'] = self.ctr_modalites.loc[cols, f'Axe{k+1}'].sum()
-        
-        # 6. RAPPORT DE CORRÉLATION η² (selon cours: η² = Ctr_variable × λ_k × p)
-        self.eta2 = pd.DataFrame(
-            index=self.vars_quali_toutes,
-            columns=[f'Axe{k+1}' for k in range(n_axes)],
-            dtype=float  # CORRECTION: spécifier le type float
-        )
-        for var in self.vars_quali_toutes:
-            for k in range(n_axes):
-                ctr_val = float(self.ctr_variables.loc[var, f'Axe{k+1}'])  # Conversion explicite
-                self.eta2.loc[var, f'Axe{k+1}'] = (ctr_val / 100) * self.lambda_k[k] * self.p
-        
-        print("✓ Contributions des individus calculées")
-        print("✓ Contributions des modalités calculées")
-        print("✓ Contributions des variables calculées")
-        print("✓ Cos² calculés")
-        print("✓ Rapports de corrélation η² calculés")
-        print()
+        print("✓ Contributions et Cos² calculés\n")
     
-    def afficher_tableau_inerties(self):
-        """Affiche le tableau comparatif des inerties (comme dans le cours)"""
-        print("\n" + "="*100)
-        print("TABLEAU COMPARATIF DES INERTIES")
-        print("="*100)
-        
-        df_inerties = pd.DataFrame({
-            'λ_k': self.lambda_k,
-            '% Inertie': self.inertie_pct,
-            '% Cumulé': self.inertie_cum,
-            'λ²_k': self.lambda_k**2,
-            'λ̃_k (Benzécri)': self.lambda_benzecri,
-            '% Benzécri': self.inertie_benzecri,
-            '% Cum. Benz.': self.inertie_benzecri_cum,
-            '% Greenacre': self.inertie_greenacre,
-            '% Cum. Green.': self.inertie_greenacre_cum
-        })
-        df_inerties.index = [f'Axe {k+1}' for k in range(len(self.lambda_k))]
-        
-        print(df_inerties.to_string())
-        
-        print("\n" + "-"*100)
-        print(f"Sommes:")
-        print(f"  I_totale = {self.I_totale_theorique:.4f}")
-        print(f"  S_B (Benzécri) = {self.S_B:.4f}")
-        print(f"  S_G (Greenacre) = {self.S_G:.4f}")
-        print("="*100 + "\n")
+    # ========================================================================
+    # GRAPHIQUES
+    # ========================================================================
     
-    def afficher_contributions_modalites(self, axe=1, top_n=15):
-        """Affiche les modalités contribuant le plus à un axe"""
-        print(f"\n{'='*80}")
-        print(f"TOP {top_n} MODALITÉS CONTRIBUANT À L'AXE {axe}")
-        print(f"{'='*80}")
+    def plot_benzecri(self):
+        """Graphique de comparaison avec correction de Benzécri"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(18, 14))
         
-        axe_col = f'Axe{axe}'
+        n = len(self.lambda_k)
+        labels = [f'{k+1}' for k in range(n)]
+        x = np.arange(n)
+        width = 0.35
         
-        # Seuil de contribution significative
-        seuil_contrib = 100 / self.J  # contribution moyenne
-        
-        df_contrib = pd.DataFrame({
-            'Coordonnée': self.coord_modalites[axe_col],
-            'Contribution (%)': self.ctr_modalites[axe_col],
-            'Cos²': self.cos2_modalites[axe_col],
-            'Effectif': self.n_j
-        })
-        
-        df_contrib = df_contrib.sort_values('Contribution (%)', ascending=False).head(top_n)
-        
-        print(df_contrib.to_string())
-        print(f"\nSeuil de contribution moyenne: {seuil_contrib:.2f}%")
-        print(f"Seuil |G_k(j)| > √λ_k: {np.sqrt(self.lambda_k[axe-1]):.4f}")
-        print("="*80 + "\n")
-    
-    def afficher_eta2(self):
-        """Affiche le tableau η² (rapport de corrélation)"""
-        print("\n" + "="*80)
-        print("RAPPORTS DE CORRÉLATION η² (Variables × Axes)")
-        print("="*80)
-        print("\nη² proche de 1 → Variable fortement associée à l'axe")
-        print("η² proche de 0 → Variable faiblement associée à l'axe\n")
-        
-        print(self.eta2.to_string())
-        print("\n" + "="*80 + "\n")
-    
-    def plot_scree(self):
-        """Graphique des valeurs propres (comme dans le cours)"""
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        
-        n_axes = len(self.lambda_k)
-        axes_labels = [f'{k+1}' for k in range(n_axes)]
-        
-        # 1. Valeurs propres brutes
-        ax1.bar(axes_labels, self.lambda_k, color='steelblue', 
-               edgecolor='black', alpha=0.8)
-        ax1.axhline(y=1/self.p, color='red', linestyle='--', linewidth=2, 
+        # 1. Comparaison valeurs propres
+        ax1.bar(x - width/2, self.lambda_k, width, label='Original', 
+               color='steelblue', alpha=0.8, edgecolor='black')
+        ax1.bar(x + width/2, self.lambda_corr, width, label='Corrigé (Benzécri)', 
+               color='coral', alpha=0.8, edgecolor='black')
+        ax1.axhline(1/self.p, color='red', linestyle='--', linewidth=2,
                    label=f'Seuil 1/p = {1/self.p:.3f}')
-        ax1.set_xlabel('Axes', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Valeurs propres (λ_k)', fontsize=12, fontweight='bold')
-        ax1.set_title('A) Valeurs Propres Brutes', fontsize=14, fontweight='bold')
-        ax1.legend()
-        ax1.grid(axis='y', alpha=0.3)
+        ax1.set_xlabel('Axes', fontweight='bold', fontsize=11)
+        ax1.set_ylabel('λ', fontweight='bold', fontsize=11)
+        ax1.set_title('Valeurs Propres: Original vs Corrigé', fontweight='bold', fontsize=13)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(labels)
+        ax1.legend(fontsize=10)
+        ax1.grid(alpha=0.3, axis='y')
         
-        # 2. Inertie cumulée brute
-        ax2.plot(axes_labels, self.inertie_cum, marker='o', 
-                linewidth=2, markersize=8, color='darkgreen')
-        ax2.fill_between(range(n_axes), self.inertie_cum, alpha=0.3, color='green')
-        ax2.set_xlabel('Axes', fontsize=12, fontweight='bold')
-        ax2.set_ylabel('Inertie cumulée (%)', fontsize=12, fontweight='bold')
-        ax2.set_title('B) Inertie Cumulée (Brute)', fontsize=14, fontweight='bold')
+        # 2. Inertie expliquée (%)
+        ax2.plot(labels, self.inertie_pct, marker='o', linewidth=2.5, 
+                label='Original', color='steelblue', markersize=8)
+        ax2.plot(labels, self.inertie_corr_pct, marker='s', linewidth=2.5, 
+                label='Corrigé (Benzécri)', color='coral', markersize=8)
+        ax2.set_xlabel('Axes', fontweight='bold', fontsize=11)
+        ax2.set_ylabel('% Inertie', fontweight='bold', fontsize=11)
+        ax2.set_title('Inertie Expliquée par Axe', fontweight='bold', fontsize=13)
+        ax2.legend(fontsize=10)
         ax2.grid(alpha=0.3)
         
-        # 3. Comparaison Benzécri vs Greenacre
-        x_pos = np.arange(n_axes)
-        width = 0.35
-        ax3.bar(x_pos - width/2, self.inertie_benzecri, width, 
-               label='Benzécri', color='orange', edgecolor='black', alpha=0.8)
-        ax3.bar(x_pos + width/2, self.inertie_greenacre, width, 
-               label='Greenacre', color='purple', edgecolor='black', alpha=0.8)
-        ax3.set_xlabel('Axes', fontsize=12, fontweight='bold')
-        ax3.set_ylabel('% Inertie', fontsize=12, fontweight='bold')
-        ax3.set_title('C) Inerties Corrigées (Benzécri vs Greenacre)', 
-                     fontsize=14, fontweight='bold')
-        ax3.set_xticks(x_pos)
-        ax3.set_xticklabels(axes_labels)
-        ax3.legend()
-        ax3.grid(axis='y', alpha=0.3)
+        # 3. Inertie cumulée (%)
+        ax3.plot(labels, self.inertie_cum, marker='o', linewidth=2.5, 
+                label='Original', color='darkgreen', markersize=8)
+        ax3.fill_between(range(n), self.inertie_cum, alpha=0.2, color='green')
+        ax3.plot(labels, self.inertie_corr_cum, marker='s', linewidth=2.5, 
+                label='Corrigé (Benzécri)', color='darkorange', markersize=8)
+        ax3.fill_between(range(n), self.inertie_corr_cum, alpha=0.2, color='orange')
+        ax3.set_xlabel('Axes', fontweight='bold', fontsize=11)
+        ax3.set_ylabel('% Inertie Cumulée', fontweight='bold', fontsize=11)
+        ax3.set_title('Inertie Cumulée', fontweight='bold', fontsize=13)
+        ax3.legend(fontsize=10)
+        ax3.grid(alpha=0.3)
         
-        # 4. Inerties cumulées corrigées
-        ax4.plot(axes_labels, self.inertie_benzecri_cum, marker='o', 
-                linewidth=2, markersize=8, label='Benzécri', color='orange')
-        ax4.plot(axes_labels, self.inertie_greenacre_cum, marker='s', 
-                linewidth=2, markersize=8, label='Greenacre', color='purple')
-        ax4.set_xlabel('Axes', fontsize=12, fontweight='bold')
-        ax4.set_ylabel('Inertie cumulée (%)', fontsize=12, fontweight='bold')
-        ax4.set_title('D) Inerties Cumulées Corrigées', fontsize=14, fontweight='bold')
-        ax4.legend()
-        ax4.grid(alpha=0.3)
+        # 4. Tableau comparatif
+        ax4.axis('off')
+        data = []
+        for k in range(n):
+            data.append([
+                f'Axe {k+1}',
+                f'{self.lambda_k[k]:.4f}',
+                f'{self.lambda_corr[k]:.4f}',
+                f'{self.inertie_pct[k]:.2f}%',
+                f'{self.inertie_corr_pct[k]:.2f}%'
+            ])
+        
+        table = ax4.table(cellText=data,
+                         colLabels=['Axe', 'λ Orig.', 'λ Corr.', '% Orig.', '% Corr.'],
+                         cellLoc='center', loc='center', 
+                         colWidths=[0.15, 0.2, 0.2, 0.2, 0.2])
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 2.2)
+        
+        # Colorer l'en-tête
+        for i in range(5):
+            table[(0, i)].set_facecolor('#40466e')
+            table[(0, i)].set_text_props(weight='bold', color='white')
+        
+        ax4.set_title('Récapitulatif: Original vs Corrigé (Benzécri)', 
+                     fontweight='bold', fontsize=13, pad=20)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/00_Benzecri/correction_benzecri.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def plot_modalites(self, axes=(1, 2), top_contrib=None, afficher_contributions=True):
-        """Projection des modalités avec contributions"""
-        axe1, axe2 = axes
+    def plot_scree(self):
+        """Scree plot"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+        n = len(self.lambda_k)
+        labels = [f'{k+1}' for k in range(n)]
         
-        x = self.coord_modalites[f'Axe{axe1}'].values
-        y = self.coord_modalites[f'Axe{axe2}'].values
-        
-        # Graphique 1: Coloré par cos²
-        cos2_sum = self.cos2_modalites[f'Axe{axe1}'] + self.cos2_modalites[f'Axe{axe2}']
-        
-        ax1.axhline(y=0, color='black', linewidth=1, alpha=0.5)
-        ax1.axvline(x=0, color='black', linewidth=1, alpha=0.5)
-        
-        scatter1 = ax1.scatter(x, y, c=cos2_sum, s=100, cmap='YlOrRd', 
-                              edgecolors='black', linewidth=1, alpha=0.8)
-        
-        # Annoter les modalités
-        if top_contrib is not None:
-            contrib_axe1 = self.ctr_modalites[f'Axe{axe1}']
-            contrib_axe2 = self.ctr_modalites[f'Axe{axe2}']
-            contrib_tot = contrib_axe1 + contrib_axe2
-            top_indices = contrib_tot.nlargest(top_contrib).index
-            
-            for idx in top_indices:
-                pos = self.coord_modalites.index.get_loc(idx)
-                ax1.annotate(idx, (x[pos], y[pos]), fontsize=8, 
-                           ha='right', fontweight='bold')
-        else:
-            for i, label in enumerate(self.coord_modalites.index):
-                ax1.annotate(label, (x[i], y[i]), fontsize=7, ha='right')
-        
-        plt.colorbar(scatter1, ax=ax1, label='Cos²')
-        ax1.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                      fontsize=12, fontweight='bold')
-        ax1.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                      fontsize=12, fontweight='bold')
-        ax1.set_title('Modalités (colorées par Cos²)', fontsize=14, fontweight='bold')
+        # Valeurs propres
+        ax1.bar(labels, self.lambda_k, color='steelblue', alpha=0.8)
+        ax1.axhline(1/self.p, color='red', linestyle='--', linewidth=2,
+                   label=f'Seuil 1/p = {1/self.p:.3f}')
+        ax1.set_xlabel('Axes', fontweight='bold')
+        ax1.set_ylabel('λ', fontweight='bold')
+        ax1.set_title('Valeurs Propres', fontweight='bold', fontsize=14)
+        ax1.legend()
         ax1.grid(alpha=0.3)
         
-        # Graphique 2: Coloré par contribution
-        if afficher_contributions:
-            contrib_tot = self.ctr_modalites[f'Axe{axe1}'] + self.ctr_modalites[f'Axe{axe2}']
-            
-            ax2.axhline(y=0, color='black', linewidth=1, alpha=0.5)
-            ax2.axvline(x=0, color='black', linewidth=1, alpha=0.5)
-            
-            scatter2 = ax2.scatter(x, y, c=contrib_tot, s=100, cmap='viridis', 
-                                  edgecolors='black', linewidth=1, alpha=0.8)
-            
-            if top_contrib is not None:
-                for idx in top_indices:
-                    pos = self.coord_modalites.index.get_loc(idx)
-                    ax2.annotate(idx, (x[pos], y[pos]), fontsize=8, 
-                               ha='right', fontweight='bold')
-            else:
-                for i, label in enumerate(self.coord_modalites.index):
-                    ax2.annotate(label, (x[i], y[i]), fontsize=7, ha='right')
-            
-            plt.colorbar(scatter2, ax=ax2, label='Contribution (%)')
-            ax2.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                          fontsize=12, fontweight='bold')
-            ax2.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                          fontsize=12, fontweight='bold')
-            ax2.set_title('Modalités (colorées par Contribution)', 
-                         fontsize=14, fontweight='bold')
-            ax2.grid(alpha=0.3)
+        # Inertie cumulée
+        ax2.plot(labels, self.inertie_cum, marker='o', linewidth=2, color='darkgreen')
+        ax2.fill_between(range(n), self.inertie_cum, alpha=0.3, color='green')
+        ax2.set_xlabel('Axes', fontweight='bold')
+        ax2.set_ylabel('% Inertie Cumulée', fontweight='bold')
+        ax2.set_title('Inertie Cumulée', fontweight='bold', fontsize=14)
+        ax2.grid(alpha=0.3)
+        
+        # Inertie par axe
+        ax3.bar(labels, self.inertie_pct, color='orange', alpha=0.8)
+        ax3.set_xlabel('Axes', fontweight='bold')
+        ax3.set_ylabel('% Inertie', fontweight='bold')
+        ax3.set_title('Inertie par Axe', fontweight='bold', fontsize=14)
+        ax3.grid(alpha=0.3)
+        
+        # Tableau
+        ax4.axis('off')
+        data = [[f'Axe {k+1}', f'{self.lambda_k[k]:.4f}',
+                f'{self.inertie_pct[k]:.2f}%', f'{self.inertie_cum[k]:.2f}%']
+                for k in range(n)]
+        table = ax4.table(cellText=data,
+                         colLabels=['Axe', 'λ', '% Inertie', '% Cumulé'],
+                         cellLoc='center', loc='center', colWidths=[0.2, 0.25, 0.25, 0.3])
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 2)
+        ax4.set_title('Récapitulatif', fontweight='bold', fontsize=14)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/01_Scree_Plot/scree_plot.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def plot_individus(self, axes=(1, 2), color_by=None, top_contrib=None):
-        """Projection des individus"""
-        axe1, axe2 = axes
-        
-        fig, ax = plt.subplots(figsize=(12, 10))
-        
-        ax.axhline(y=0, color='black', linewidth=1, alpha=0.5)
-        ax.axvline(x=0, color='black', linewidth=1, alpha=0.5)
-        
-        x = self.coord_individus[f'Axe{axe1}'].values
-        y = self.coord_individus[f'Axe{axe2}'].values
-        
-        if color_by:
-            if color_by in self.data.columns:
-                var_color = self.data[color_by]
-            elif color_by in self.data_discretisee.columns:
-                var_color = self.data_discretisee[color_by]
-            else:
-                var_color = None
-            
-            if var_color is not None:
-                categories = var_color.unique()
-                colors = plt.cm.Set1(np.linspace(0, 1, len(categories)))
-                
-                for i, cat in enumerate(categories):
-                    mask = var_color == cat
-                    ax.scatter(x[mask], y[mask], s=50, alpha=0.6, 
-                              color=colors[i], edgecolors='black', 
-                              linewidth=0.5, label=str(cat))
-                
-                ax.legend(loc='best', fontsize=10, title=color_by)
-        else:
-            # Colorier par cos²
-            cos2_sum = self.cos2_individus[f'Axe{axe1}'] + self.cos2_individus[f'Axe{axe2}']
-            scatter = ax.scatter(x, y, s=50, alpha=0.6, c=cos2_sum, 
-                               cmap='YlOrRd', edgecolors='black', linewidth=0.5)
-            plt.colorbar(scatter, ax=ax, label='Cos²')
-        
-        # Annoter les individus avec forte contribution
-        if top_contrib is not None:
-            contrib_tot = self.ctr_individus[f'Axe{axe1}'] + self.ctr_individus[f'Axe{axe2}']
-            top_indices = contrib_tot.nlargest(top_contrib).index
-            for idx in top_indices:
-                pos = self.coord_individus.index.get_loc(idx)
-                ax.annotate(f'{idx}', (x[pos], y[pos]), fontsize=8, 
-                           ha='right', fontweight='bold', color='red')
-        
-        ax.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                     fontsize=12, fontweight='bold')
-        ax.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                     fontsize=12, fontweight='bold')
-        ax.set_title('Projection des Individus', fontsize=14, fontweight='bold')
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-    
-    def plot_variables_eta2(self, axes=(1, 2)):
-        """Cercle des corrélations des variables (basé sur η²)"""
-        axe1, axe2 = axes
-        
-        fig, ax = plt.subplots(figsize=(10, 10))
-        
-        # Dessiner le cercle
-        circle = plt.Circle((0, 0), 1, color='blue', fill=False, linewidth=2)
-        ax.add_patch(circle)
-        
-        ax.axhline(y=0, color='black', linewidth=1, alpha=0.5)
-        ax.axvline(x=0, color='black', linewidth=1, alpha=0.5)
-        
-        # Coordonnées basées sur η² - CORRECTION: conversion explicite en float
-        eta2_axe1 = pd.to_numeric(self.eta2[f'Axe{axe1}'], errors='coerce').fillna(0).values
-        eta2_axe2 = pd.to_numeric(self.eta2[f'Axe{axe2}'], errors='coerce').fillna(0).values
-        
-        x = np.sqrt(np.abs(eta2_axe1))  # abs pour éviter les racines de négatifs
-        y = np.sqrt(np.abs(eta2_axe2))
-        
-        # Ajuster les signes selon la contribution principale
-        for i, var in enumerate(self.vars_quali_toutes):
-            # Vérifier le signe dominant des modalités de cette variable
-            cols = self.modalites_info[var]['colonnes']
-            coord_var_axe1 = self.coord_modalites.loc[cols, f'Axe{axe1}']
-            coord_var_axe2 = self.coord_modalites.loc[cols, f'Axe{axe2}']
-            
-            if coord_var_axe1.mean() < 0:
-                x[i] = -x[i]
-            if coord_var_axe2.mean() < 0:
-                y[i] = -y[i]
-        
-        # Tracer les flèches
-        for i, var in enumerate(self.vars_quali_toutes):
-            ax.arrow(0, 0, x[i], y[i], head_width=0.05, head_length=0.05, 
-                    fc='red', ec='red', linewidth=2, alpha=0.7)
-            ax.text(x[i]*1.1, y[i]*1.1, var, fontsize=11, 
-                   ha='center', va='center', fontweight='bold',
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        ax.set_xlim(-1.2, 1.2)
-        ax.set_ylim(-1.2, 1.2)
-        ax.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                     fontsize=12, fontweight='bold')
-        ax.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                     fontsize=12, fontweight='bold')
-        ax.set_title('Représentation des Variables (basée sur η²)', 
-                    fontsize=14, fontweight='bold')
-        ax.set_aspect('equal')
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-    
-    def plot_modalites_par_variable(self, axes=(1, 2)):
-        """Projette les modalités séparées par variable (comme Figure 1.1 du cours)"""
-        axe1, axe2 = axes
-        
-        n_vars = len(self.vars_quali_toutes)
+    def plot_par_variable(self):
+        """Graphe par variable"""
+        n_vars = len(self.vars_toutes)
         n_cols = 3
         n_rows = (n_vars + n_cols - 1) // n_cols
         
-        fig, axes_array = plt.subplots(n_rows, n_cols, figsize=(18, 5*n_rows))
-        axes_array = axes_array.flatten() if n_vars > 1 else [axes_array]
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 5*n_rows))
+        axes = axes.flatten() if n_vars > 1 else [axes]
         
-        for idx, var in enumerate(self.vars_quali_toutes):
-            ax = axes_array[idx]
-            cols = self.modalites_info[var]['colonnes']
+        for idx, var in enumerate(self.vars_toutes):
+            ax = axes[idx]
+            cols = self.mod_info[var]['colonnes']
             
-            x = self.coord_modalites.loc[cols, f'Axe{axe1}'].values
-            y = self.coord_modalites.loc[cols, f'Axe{axe2}'].values
+            x = self.coord_mod.loc[cols, 'Axe1'].values
+            y = self.coord_mod.loc[cols, 'Axe2'].values
+            eff = self.n_j[cols].values
             
-            ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.5)
-            ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.5)
+            ax.axhline(0, color='k', lw=0.5, alpha=0.5)
+            ax.axvline(0, color='k', lw=0.5, alpha=0.5)
             
-            # Colorier par effectif
-            effectifs = self.n_j[cols].values
-            scatter = ax.scatter(x, y, s=200, c=effectifs, cmap='viridis', 
-                               alpha=0.7, edgecolors='black', linewidth=2)
+            sc = ax.scatter(x, y, s=200, c=eff, cmap='viridis',
+                           alpha=0.7, edgecolors='black', lw=2)
             
             for j, col in enumerate(cols):
-                modalite = col.replace(f'{var}_', '')
-                ax.text(x[j], y[j], modalite, fontsize=9, 
-                       ha='center', va='center', fontweight='bold')
+                mod = col.replace(f'{var}_', '')
+                ax.text(x[j], y[j], mod, fontsize=9, ha='center',
+                       va='center', fontweight='bold')
             
-            plt.colorbar(scatter, ax=ax, label='Effectif')
-            
-            ax.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', fontsize=10)
-            ax.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', fontsize=10)
-            ax.set_title(f'{var}\n(m_j = {self.modalites_info[var]["m_j"]})', 
+            plt.colorbar(sc, ax=ax, label='Effectif')
+            ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontsize=10)
+            ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontsize=10)
+            ax.set_title(f'{var} (m={self.mod_info[var]["m_j"]})',
                         fontsize=12, fontweight='bold')
             ax.grid(alpha=0.3)
         
-        # Cacher les axes vides
-        for idx in range(n_vars, len(axes_array)):
-            axes_array[idx].axis('off')
+        for idx in range(n_vars, len(axes)):
+            axes[idx].axis('off')
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/02_Graphe_par_variable/par_variable.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def verifier_relations_barycentriques(self, individu_id=0, modalite_id=None):
-        """Vérifie les relations de transition (formules 1.15 et 1.16 du cours)"""
-        print("\n" + "="*80)
-        print("VÉRIFICATION DES RELATIONS BARYCENTRIQUES")
-        print("="*80)
+    def plot_biplot(self):
+        """Biplot"""
+        fig, ax = plt.subplots(figsize=(14, 12))
         
-        # Relation 1: F_s(i) = (1/√λ_s) * (1/p) * Σ_j n_ij * G_s(j)
-        print(f"\n1. Vérification pour l'individu {individu_id}:")
-        print("   F_s(i) = (1/√λ_s) * (1/p) * Σ_j n_ij * G_s(j)")
+        # Individus par death
+        x_ind = self.coord_ind['Axe1'].values
+        y_ind = self.coord_ind['Axe2'].values
         
-        for s in range(min(3, len(self.lambda_k))):
-            # Calcul direct
-            F_direct = self.F[individu_id, s]
-            
-            # Calcul via relation barycentrique
-            modalites_choisies = self.X.iloc[individu_id] == 1
-            G_modalites = self.G[modalites_choisies, s]
-            F_calcule = (1 / np.sqrt(self.lambda_k[s])) * (1 / self.p) * G_modalites.sum()
-            
-            print(f"   Axe {s+1}: F_direct = {F_direct:.6f}, F_calculé = {F_calcule:.6f}, "
-                  f"Différence = {abs(F_direct - F_calcule):.6e}")
-        
-        # Relation 2: G_s(j) = (1/√λ_s) * (1/n_j) * Σ_i n_ij * F_s(i)
-        if modalite_id is None:
-            modalite_id = self.coord_modalites.index[0]
-        
-        print(f"\n2. Vérification pour la modalité '{modalite_id}':")
-        print("   G_s(j) = (1/√λ_s) * (1/n_j) * Σ_i n_ij * F_s(i)")
-        
-        j_idx = self.coord_modalites.index.get_loc(modalite_id)
-        n_j_val = self.n_j.iloc[j_idx]
-        
-        for s in range(min(3, len(self.lambda_k))):
-            # Calcul direct
-            G_direct = self.G[j_idx, s]
-            
-            # Calcul via relation barycentrique
-            individus_avec_modalite = self.X.iloc[:, j_idx] == 1
-            F_individus = self.F[individus_avec_modalite, s]
-            G_calcule = (1 / np.sqrt(self.lambda_k[s])) * (1 / n_j_val) * F_individus.sum()
-            
-            print(f"   Axe {s+1}: G_direct = {G_direct:.6f}, G_calculé = {G_calcule:.6f}, "
-                  f"Différence = {abs(G_direct - G_calcule):.6e}")
-        
-        print("\n✓ Les relations barycentriques sont vérifiées!")
-        print("="*80 + "\n")
-    
-    def plot_modalites_3d(self, axes=(1, 2, 3), top_contrib=None, rotation=(30, 45)):
-        """Projection 3D des modalités"""
-        axe1, axe2, axe3 = axes
-        
-        fig = plt.figure(figsize=(16, 12))
-        
-        # Sous-graphique 1: Coloré par cos²
-        ax1 = fig.add_subplot(121, projection='3d')
-        
-        x = self.coord_modalites[f'Axe{axe1}'].values
-        y = self.coord_modalites[f'Axe{axe2}'].values
-        z = self.coord_modalites[f'Axe{axe3}'].values
-        
-        cos2_sum = (self.cos2_modalites[f'Axe{axe1}'] + 
-                    self.cos2_modalites[f'Axe{axe2}'] + 
-                    self.cos2_modalites[f'Axe{axe3}'])
-        
-        scatter1 = ax1.scatter(x, y, z, c=cos2_sum, s=100, cmap='YlOrRd', 
-                              edgecolors='black', linewidth=1, alpha=0.8)
-        
-        # Annoter les modalités
-        if top_contrib is not None:
-            contrib_tot = (self.ctr_modalites[f'Axe{axe1}'] + 
-                          self.ctr_modalites[f'Axe{axe2}'] + 
-                          self.ctr_modalites[f'Axe{axe3}'])
-            top_indices = contrib_tot.nlargest(top_contrib).index
-            
-            for idx in top_indices:
-                pos = self.coord_modalites.index.get_loc(idx)
-                ax1.text(x[pos], y[pos], z[pos], idx, fontsize=7, 
-                        fontweight='bold')
+        if 'death' in self.data.columns:
+            for val, color, label in [(0, 'lightblue', 'Vivant'),
+                                      (1, 'red', 'Décédé')]:
+                mask = self.data['death'] == val
+                ax.scatter(x_ind[mask], y_ind[mask], s=30, alpha=0.4,
+                          color=color, edgecolors='k', lw=0.3, label=label)
         else:
-            for i, label in enumerate(self.coord_modalites.index):
-                ax1.text(x[i], y[i], z[i], label, fontsize=6)
+            ax.scatter(x_ind, y_ind, s=30, alpha=0.4, color='gray',
+                      edgecolors='k', lw=0.3, label='Individus')
         
-        # Plans de référence
-        ax1.plot([0, 0], [0, 0], [z.min(), z.max()], 'k-', alpha=0.3, linewidth=0.5)
-        ax1.plot([0, 0], [y.min(), y.max()], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        ax1.plot([x.min(), x.max()], [0, 0], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
+        # Top modalités
+        contrib = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
+        top = contrib.nlargest(15).index
         
-        ax1.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax1.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax1.set_zlabel(f'Axe {axe3} ({self.inertie_pct[axe3-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax1.set_title('Modalités 3D (colorées par Cos²)', 
-                     fontsize=12, fontweight='bold', pad=20)
-        ax1.view_init(elev=rotation[0], azim=rotation[1])
-        fig.colorbar(scatter1, ax=ax1, label='Cos²', shrink=0.5, pad=0.1)
+        x_mod = self.coord_mod.loc[top, 'Axe1'].values
+        y_mod = self.coord_mod.loc[top, 'Axe2'].values
         
-        # Sous-graphique 2: Coloré par contribution
-        ax2 = fig.add_subplot(122, projection='3d')
+        ax.scatter(x_mod, y_mod, s=200, alpha=0.9, color='darkgreen',
+                  edgecolors='k', lw=2, marker='^', label='Modalités')
         
-        contrib_tot = (self.ctr_modalites[f'Axe{axe1}'] + 
-                      self.ctr_modalites[f'Axe{axe2}'] + 
-                      self.ctr_modalites[f'Axe{axe3}'])
+        for idx in top:
+            x = self.coord_mod.loc[idx, 'Axe1']
+            y = self.coord_mod.loc[idx, 'Axe2']
+            ax.text(x, y, idx, fontsize=8, fontweight='bold', color='darkgreen')
         
-        scatter2 = ax2.scatter(x, y, z, c=contrib_tot, s=100, cmap='viridis', 
-                              edgecolors='black', linewidth=1, alpha=0.8)
-        
-        if top_contrib is not None:
-            for idx in top_indices:
-                pos = self.coord_modalites.index.get_loc(idx)
-                ax2.text(x[pos], y[pos], z[pos], idx, fontsize=7, 
-                        fontweight='bold')
-        else:
-            for i, label in enumerate(self.coord_modalites.index):
-                ax2.text(x[i], y[i], z[i], label, fontsize=6)
-        
-        # Plans de référence
-        ax2.plot([0, 0], [0, 0], [z.min(), z.max()], 'k-', alpha=0.3, linewidth=0.5)
-        ax2.plot([0, 0], [y.min(), y.max()], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        ax2.plot([x.min(), x.max()], [0, 0], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        
-        ax2.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax2.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax2.set_zlabel(f'Axe {axe3} ({self.inertie_pct[axe3-1]:.2f}%)', 
-                      fontsize=10, fontweight='bold')
-        ax2.set_title('Modalités 3D (colorées par Contribution)', 
-                     fontsize=12, fontweight='bold', pad=20)
-        ax2.view_init(elev=rotation[0], azim=rotation[1])
-        fig.colorbar(scatter2, ax=ax2, label='Contribution (%)', shrink=0.5, pad=0.1)
+        ax.axhline(0, color='k', lw=1, alpha=0.5)
+        ax.axvline(0, color='k', lw=1, alpha=0.5)
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax.set_title('Biplot (Top 15 Modalités)', fontweight='bold', fontsize=14)
+        ax.legend()
+        ax.grid(alpha=0.3)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/03_Biplot/biplot.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def plot_individus_3d(self, axes=(1, 2, 3), color_by=None, top_contrib=None, rotation=(30, 45)):
-        """Projection 3D des individus"""
-        axe1, axe2, axe3 = axes
+    def plot_ind_ctr(self):
+        """Individus contribution"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
         
-        fig = plt.figure(figsize=(14, 10))
-        ax = fig.add_subplot(111, projection='3d')
+        x = self.coord_ind['Axe1'].values
+        y = self.coord_ind['Axe2'].values
         
-        x = self.coord_individus[f'Axe{axe1}'].values
-        y = self.coord_individus[f'Axe{axe2}'].values
-        z = self.coord_individus[f'Axe{axe3}'].values
+        # Axe 1
+        c1 = self.ctr_ind['Axe1']
+        sc1 = ax1.scatter(x, y, c=c1, s=50, cmap='Reds',
+                         edgecolors='k', lw=0.5, alpha=0.7)
+        ax1.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax1.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc1, ax=ax1, label='Contribution (%)')
+        ax1.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax1.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax1.set_title('Contribution Axe 1', fontweight='bold')
+        ax1.grid(alpha=0.3)
         
-        if color_by:
-            if color_by in self.data.columns:
-                var_color = self.data[color_by]
-            elif color_by in self.data_discretisee.columns:
-                var_color = self.data_discretisee[color_by]
-            else:
-                var_color = None
-            
-            if var_color is not None:
-                categories = var_color.unique()
-                colors = plt.cm.Set1(np.linspace(0, 1, len(categories)))
-                
-                for i, cat in enumerate(categories):
-                    mask = var_color == cat
-                    ax.scatter(x[mask], y[mask], z[mask], s=50, alpha=0.6, 
-                              color=colors[i], edgecolors='black', 
-                              linewidth=0.5, label=str(cat))
-                
-                ax.legend(loc='best', fontsize=9, title=color_by)
-        else:
-            cos2_sum = (self.cos2_individus[f'Axe{axe1}'] + 
-                       self.cos2_individus[f'Axe{axe2}'] + 
-                       self.cos2_individus[f'Axe{axe3}'])
-            scatter = ax.scatter(x, y, z, s=50, alpha=0.6, c=cos2_sum, 
-                               cmap='YlOrRd', edgecolors='black', linewidth=0.5)
-            fig.colorbar(scatter, ax=ax, label='Cos²', shrink=0.5, pad=0.1)
-        
-        # Annoter les individus avec forte contribution
-        if top_contrib is not None:
-            contrib_tot = (self.ctr_individus[f'Axe{axe1}'] + 
-                          self.ctr_individus[f'Axe{axe2}'] + 
-                          self.ctr_individus[f'Axe{axe3}'])
-            top_indices = contrib_tot.nlargest(top_contrib).index
-            for idx in top_indices:
-                pos = self.coord_individus.index.get_loc(idx)
-                ax.text(x[pos], y[pos], z[pos], f'{idx}', fontsize=7, 
-                       fontweight='bold', color='red')
-        
-        # Plans de référence
-        ax.plot([0, 0], [0, 0], [z.min(), z.max()], 'k-', alpha=0.3, linewidth=0.5)
-        ax.plot([0, 0], [y.min(), y.max()], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        ax.plot([x.min(), x.max()], [0, 0], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        
-        ax.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_zlabel(f'Axe {axe3} ({self.inertie_pct[axe3-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_title('Projection 3D des Individus', fontsize=14, fontweight='bold', pad=20)
-        ax.view_init(elev=rotation[0], azim=rotation[1])
+        # Axe 2
+        c2 = self.ctr_ind['Axe2']
+        sc2 = ax2.scatter(x, y, c=c2, s=50, cmap='Blues',
+                         edgecolors='k', lw=0.5, alpha=0.7)
+        ax2.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax2.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc2, ax=ax2, label='Contribution (%)')
+        ax2.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax2.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax2.set_title('Contribution Axe 2', fontweight='bold')
+        ax2.grid(alpha=0.3)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/04_Ind_Ctr/ind_ctr.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def plot_modalites_par_variable_3d(self, axes=(1, 2, 3), rotation=(30, 45)):
-        """Projette les modalités en 3D séparées par variable"""
-        axe1, axe2, axe3 = axes
+    def plot_ind_cos(self):
+        """Individus cos²"""
+        fig, ax = plt.subplots(figsize=(12, 10))
         
-        n_vars = len(self.vars_quali_toutes)
+        x = self.coord_ind['Axe1'].values
+        y = self.coord_ind['Axe2'].values
+        cos2 = self.cos2_ind['Axe1'] + self.cos2_ind['Axe2']
+        
+        sc = ax.scatter(x, y, c=cos2, s=50, cmap='YlOrRd',
+                       edgecolors='k', lw=0.5, alpha=0.7)
+        ax.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc, ax=ax, label='Cos²')
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax.set_title('Qualité Représentation (Cos²)', fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/05_Ind_cos/ind_cos2.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_mod_cos(self):
+        """Modalités cos²"""
+        fig, ax = plt.subplots(figsize=(14, 12))
+        
+        x = self.coord_mod['Axe1'].values
+        y = self.coord_mod['Axe2'].values
+        cos2 = self.cos2_mod['Axe1'] + self.cos2_mod['Axe2']
+        
+        sc = ax.scatter(x, y, c=cos2, s=100, cmap='plasma',
+                       edgecolors='k', lw=1, alpha=0.8)
+        
+        # Top 15
+        top = cos2.nlargest(15).index
+        for idx in top:
+            pos = self.coord_mod.index.get_loc(idx)
+            ax.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
+        
+        ax.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc, ax=ax, label='Cos²')
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax.set_title('Modalités - Cos²', fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/06_Modalite_cos/mod_cos2.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_mod_ctr(self):
+        """Modalités contribution"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 10))
+        
+        x = self.coord_mod['Axe1'].values
+        y = self.coord_mod['Axe2'].values
+        
+        # Axe 1
+        c1 = self.ctr_mod['Axe1']
+        sc1 = ax1.scatter(x, y, c=c1, s=100, cmap='Reds',
+                         edgecolors='k', lw=1, alpha=0.8)
+        top1 = c1.nlargest(10).index
+        for idx in top1:
+            pos = self.coord_mod.index.get_loc(idx)
+            ax1.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
+        
+        ax1.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax1.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc1, ax=ax1, label='Contribution (%)')
+        ax1.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax1.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax1.set_title('Modalités - Contribution Axe 1', fontweight='bold')
+        ax1.grid(alpha=0.3)
+        
+        # Axe 2
+        c2 = self.ctr_mod['Axe2']
+        sc2 = ax2.scatter(x, y, c=c2, s=100, cmap='Blues',
+                         edgecolors='k', lw=1, alpha=0.8)
+        top2 = c2.nlargest(10).index
+        for idx in top2:
+            pos = self.coord_mod.index.get_loc(idx)
+            ax2.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
+        
+        ax2.axhline(0, color='k', lw=0.5, alpha=0.5)
+        ax2.axvline(0, color='k', lw=0.5, alpha=0.5)
+        plt.colorbar(sc2, ax=ax2, label='Contribution (%)')
+        ax2.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
+        ax2.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
+        ax2.set_title('Modalités - Contribution Axe 2', fontweight='bold')
+        ax2.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/07_Mod_Ctr/mod_ctr.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_modalites_contribution(self):
+        """Modalités colorées par contribution totale"""
+        fig, ax = plt.subplots(figsize=(14, 12))
+        
+        x = self.coord_mod['Axe1'].values
+        y = self.coord_mod['Axe2'].values
+        contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
+        
+        sc = ax.scatter(x, y, c=contrib_tot, s=150, cmap='RdYlGn_r',
+                       edgecolors='black', lw=1.5, alpha=0.8)
+        
+        for idx in self.coord_mod.index:
+            pos = self.coord_mod.index.get_loc(idx)
+            ax.text(x[pos], y[pos], idx, fontsize=7, ha='center', 
+                   va='center', fontweight='bold')
+        
+        ax.axhline(0, color='k', lw=1, alpha=0.5)
+        ax.axvline(0, color='k', lw=1, alpha=0.5)
+        
+        plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_title('Modalités Colorées par Contribution Totale (Axe1 + Axe2)', 
+                    fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/08_Modalite_contribution/mod_contrib_color.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_cercle_correlation(self):
+        """Cercle de corrélation avec toutes les modalités"""
+        fig, ax = plt.subplots(figsize=(14, 14))
+        
+        circle = plt.Circle((0, 0), 1, color='navy', fill=False, linewidth=2, linestyle='--')
+        ax.add_patch(circle)
+        
+        x = self.coord_mod['Axe1'].values
+        y = self.coord_mod['Axe2'].values
+        
+        norms = np.sqrt(x**2 + y**2)
+        x_norm = x / norms
+        y_norm = y / norms
+        
+        contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
+        
+        for i, idx in enumerate(self.coord_mod.index):
+            ax.arrow(0, 0, x_norm[i]*0.95, y_norm[i]*0.95,
+                    head_width=0.03, head_length=0.03, fc='gray', 
+                    ec='gray', alpha=0.6, lw=1)
+        
+        sc = ax.scatter(x_norm, y_norm, c=contrib_tot, s=100, 
+                       cmap='RdYlGn_r', edgecolors='black', lw=1.5, 
+                       alpha=0.8, zorder=10)
+        
+        for i, idx in enumerate(self.coord_mod.index):
+            ax.text(x_norm[i]*1.08, y_norm[i]*1.08, idx, 
+                   fontsize=7, ha='center', va='center', fontweight='bold')
+        
+        ax.axhline(0, color='k', lw=1, alpha=0.5)
+        ax.axvline(0, color='k', lw=1, alpha=0.5)
+        
+        ax.set_xlim(-1.2, 1.2)
+        ax.set_ylim(-1.2, 1.2)
+        ax.set_aspect('equal')
+        
+        plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_title('Cercle de Corrélation - Toutes les Modalités', 
+                    fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/09_Cercle_correlation/cercle_corr.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_histogrammes_variables(self):
+        """Histogrammes de chaque variable montrant les modalités"""
+        n_vars = len(self.vars_toutes)
         n_cols = 3
         n_rows = (n_vars + n_cols - 1) // n_cols
         
-        fig = plt.figure(figsize=(18, 6*n_rows))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 5*n_rows))
+        axes = axes.flatten() if n_vars > 1 else [axes]
         
-        for idx, var in enumerate(self.vars_quali_toutes):
-            ax = fig.add_subplot(n_rows, n_cols, idx+1, projection='3d')
-            cols = self.modalites_info[var]['colonnes']
+        colors = plt.cm.Set3(np.linspace(0, 1, 12))
+        
+        for idx, var in enumerate(self.vars_toutes):
+            ax = axes[idx]
             
-            x = self.coord_modalites.loc[cols, f'Axe{axe1}'].values
-            y = self.coord_modalites.loc[cols, f'Axe{axe2}'].values
-            z = self.coord_modalites.loc[cols, f'Axe{axe3}'].values
+            counts = self.data_disc[var].value_counts().sort_index()
+            modalites = counts.index
+            effectifs = counts.values
             
-            # Colorier par effectif
-            effectifs = self.n_j[cols].values
-            scatter = ax.scatter(x, y, z, s=200, c=effectifs, cmap='viridis', 
-                               alpha=0.7, edgecolors='black', linewidth=2)
+            bars = ax.bar(range(len(modalites)), effectifs, 
+                         color=colors[:len(modalites)], 
+                         edgecolor='black', linewidth=1.5, alpha=0.8)
             
-            for j, col in enumerate(cols):
-                modalite = col.replace(f'{var}_', '')
-                ax.text(x[j], y[j], z[j], modalite, fontsize=8, 
-                       ha='center', va='center', fontweight='bold')
+            ax.set_xticks(range(len(modalites)))
+            ax.set_xticklabels(modalites, rotation=45, ha='right')
+            ax.set_xlabel('Modalités', fontweight='bold', fontsize=10)
+            ax.set_ylabel('Effectif', fontweight='bold', fontsize=10)
+            ax.set_title(f'{var} (n={len(modalites)} modalités)', 
+                        fontweight='bold', fontsize=12)
+            ax.grid(axis='y', alpha=0.3)
             
-            # Plans de référence
-            ax.plot([0, 0], [0, 0], [z.min(), z.max()], 'k-', alpha=0.2, linewidth=0.5)
-            ax.plot([0, 0], [y.min(), y.max()], [0, 0], 'k-', alpha=0.2, linewidth=0.5)
-            ax.plot([x.min(), x.max()], [0, 0], [0, 0], 'k-', alpha=0.2, linewidth=0.5)
-            
-            fig.colorbar(scatter, ax=ax, label='Effectif', shrink=0.5, pad=0.1)
-            
-            ax.set_xlabel(f'Axe {axe1}', fontsize=8)
-            ax.set_ylabel(f'Axe {axe2}', fontsize=8)
-            ax.set_zlabel(f'Axe {axe3}', fontsize=8)
-            ax.set_title(f'{var}\n(m_j = {self.modalites_info[var]["m_j"]})', 
-                        fontsize=10, fontweight='bold')
-            ax.view_init(elev=rotation[0], azim=rotation[1])
+            for i, (bar, val) in enumerate(zip(bars, effectifs)):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{val}\n({val/self.n*100:.1f}%)',
+                       ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        for idx in range(n_vars, len(axes)):
+            axes[idx].axis('off')
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/10_Histogrammes/histogrammes_variables.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def plot_biplot_3d(self, axes=(1, 2, 3), color_by=None, top_modalites=10, rotation=(30, 45)):
-        """Biplot 3D : individus et modalités sur le même graphique"""
-        axe1, axe2, axe3 = axes
+    def plot_biplot_complet(self):
+        """Biplot avec individus et toutes les modalités"""
+        fig, ax = plt.subplots(figsize=(16, 14))
         
-        fig = plt.figure(figsize=(16, 12))
-        ax = fig.add_subplot(111, projection='3d')
+        x_ind = self.coord_ind['Axe1'].values
+        y_ind = self.coord_ind['Axe2'].values
         
-        # 1. Individus
-        x_ind = self.coord_individus[f'Axe{axe1}'].values
-        y_ind = self.coord_individus[f'Axe{axe2}'].values
-        z_ind = self.coord_individus[f'Axe{axe3}'].values
-        
-        if color_by:
-            if color_by in self.data.columns:
-                var_color = self.data[color_by]
-            elif color_by in self.data_discretisee.columns:
-                var_color = self.data_discretisee[color_by]
-            else:
-                var_color = None
-            
-            if var_color is not None:
-                categories = var_color.unique()
-                colors = plt.cm.Set1(np.linspace(0, 1, len(categories)))
-                
-                for i, cat in enumerate(categories):
-                    mask = var_color == cat
-                    ax.scatter(x_ind[mask], y_ind[mask], z_ind[mask], 
-                              s=30, alpha=0.4, color=colors[i], 
-                              edgecolors='black', linewidth=0.3, label=f'Ind: {cat}')
+        if 'death' in self.data.columns:
+            for val, color, label in [(0, 'lightblue', 'Vivant'),
+                                      (1, 'red', 'Décédé')]:
+                mask = self.data['death'] == val
+                ax.scatter(x_ind[mask], y_ind[mask], s=20, alpha=0.3,
+                          color=color, edgecolors='k', lw=0.2, label=label)
         else:
-            ax.scatter(x_ind, y_ind, z_ind, s=30, alpha=0.4, 
-                      color='lightblue', edgecolors='black', 
-                      linewidth=0.3, label='Individus')
+            ax.scatter(x_ind, y_ind, s=20, alpha=0.3, color='gray',
+                      edgecolors='k', lw=0.2, label='Individus')
         
-        # 2. Modalités (top contributrices)
-        contrib_tot = (self.ctr_modalites[f'Axe{axe1}'] + 
-                      self.ctr_modalites[f'Axe{axe2}'] + 
-                      self.ctr_modalites[f'Axe{axe3}'])
-        top_indices = contrib_tot.nlargest(top_modalites).index
+        x_mod = self.coord_mod['Axe1'].values
+        y_mod = self.coord_mod['Axe2'].values
+        contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
         
-        x_mod = self.coord_modalites.loc[top_indices, f'Axe{axe1}'].values
-        y_mod = self.coord_modalites.loc[top_indices, f'Axe{axe2}'].values
-        z_mod = self.coord_modalites.loc[top_indices, f'Axe{axe3}'].values
+        sc = ax.scatter(x_mod, y_mod, s=150, c=contrib_tot, 
+                       cmap='RdYlGn_r', edgecolors='black', lw=2, 
+                       alpha=0.9, marker='^', label='Modalités', zorder=10)
         
-        ax.scatter(x_mod, y_mod, z_mod, s=200, alpha=0.9, 
-                  color='red', edgecolors='black', linewidth=2, 
-                  marker='^', label='Modalités')
+        for idx in self.coord_mod.index:
+            pos = self.coord_mod.index.get_loc(idx)
+            ax.text(x_mod[pos], y_mod[pos], idx, fontsize=7, 
+                   fontweight='bold', color='darkgreen', zorder=11)
         
-        for idx in top_indices:
-            pos = self.coord_modalites.index.get_loc(idx)
-            x = self.coord_modalites.loc[idx, f'Axe{axe1}']
-            y = self.coord_modalites.loc[idx, f'Axe{axe2}']
-            z = self.coord_modalites.loc[idx, f'Axe{axe3}']
-            ax.text(x, y, z, idx, fontsize=8, fontweight='bold', color='darkred')
+        ax.axhline(0, color='k', lw=1, alpha=0.5)
+        ax.axvline(0, color='k', lw=1, alpha=0.5)
         
-        # Plans de référence
-        ax.plot([0, 0], [0, 0], [z_ind.min(), z_ind.max()], 'k-', alpha=0.3, linewidth=0.5)
-        ax.plot([0, 0], [y_ind.min(), y_ind.max()], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        ax.plot([x_ind.min(), x_ind.max()], [0, 0], [0, 0], 'k-', alpha=0.3, linewidth=0.5)
-        
-        ax.set_xlabel(f'Axe {axe1} ({self.inertie_pct[axe1-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_ylabel(f'Axe {axe2} ({self.inertie_pct[axe2-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_zlabel(f'Axe {axe3} ({self.inertie_pct[axe3-1]:.2f}%)', 
-                     fontsize=10, fontweight='bold')
-        ax.set_title('Biplot 3D : Individus et Modalités', 
-                    fontsize=14, fontweight='bold', pad=20)
-        ax.legend(loc='best', fontsize=9)
-        ax.view_init(elev=rotation[0], azim=rotation[1])
+        plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
+        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
+        ax.set_title('Biplot Complet - Individus et Toutes les Modalités', 
+                    fontweight='bold', fontsize=14)
+        ax.legend(loc='best', fontsize=10)
+        ax.grid(alpha=0.3)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/11_Biplot_complet/biplot_complet.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def animation_3d_interactive(self, axes=(1, 2, 3), plot_type='modalites'):
-        """
-        Crée une visualisation 3D interactive avec plusieurs angles de vue
-        plot_type: 'modalites', 'individus', ou 'biplot'
-        """
-        axe1, axe2, axe3 = axes
+    def plot_contributions_individus_axes(self):
+        """Contributions des individus dans Axe 1 et Axe 2"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         
-        # Créer 4 vues différentes
-        angles = [(20, 30), (20, 120), (20, 210), (20, 300)]
+        ctr1 = self.ctr_ind['Axe1'].sort_values(ascending=False)
+        top20_1 = ctr1.head(20)
         
-        fig = plt.figure(figsize=(18, 14))
+        ax1.barh(range(len(top20_1)), top20_1.values, 
+                color='crimson', edgecolor='black', linewidth=1.2, alpha=0.8)
+        ax1.set_yticks(range(len(top20_1)))
+        ax1.set_yticklabels(top20_1.index, fontsize=9)
+        ax1.set_xlabel('Contribution (%)', fontweight='bold', fontsize=11)
+        ax1.set_ylabel('Individus', fontweight='bold', fontsize=11)
+        ax1.set_title(f'Top 20 Individus - Contribution Axe 1\n({self.inertie_pct[0]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=13)
+        ax1.grid(axis='x', alpha=0.3)
+        ax1.invert_yaxis()
         
-        for i, (elev, azim) in enumerate(angles):
-            ax = fig.add_subplot(2, 2, i+1, projection='3d')
-            
-            if plot_type == 'modalites':
-                x = self.coord_modalites[f'Axe{axe1}'].values
-                y = self.coord_modalites[f'Axe{axe2}'].values
-                z = self.coord_modalites[f'Axe{axe3}'].values
-                
-                contrib_tot = (self.ctr_modalites[f'Axe{axe1}'] + 
-                              self.ctr_modalites[f'Axe{axe2}'] + 
-                              self.ctr_modalites[f'Axe{axe3}'])
-                
-                scatter = ax.scatter(x, y, z, c=contrib_tot, s=100, 
-                                   cmap='viridis', edgecolors='black', 
-                                   linewidth=1, alpha=0.8)
-                
-                # Annoter top 5
-                top5 = contrib_tot.nlargest(5).index
-                for idx in top5:
-                    pos = self.coord_modalites.index.get_loc(idx)
-                    ax.text(x[pos], y[pos], z[pos], idx, fontsize=6, fontweight='bold')
-                
-                fig.colorbar(scatter, ax=ax, shrink=0.5, pad=0.05)
-                ax.set_title(f'Vue {i+1}: Modalités (elev={elev}°, azim={azim}°)', 
-                           fontsize=10, fontweight='bold')
-            
-            elif plot_type == 'individus':
-                x = self.coord_individus[f'Axe{axe1}'].values
-                y = self.coord_individus[f'Axe{axe2}'].values
-                z = self.coord_individus[f'Axe{axe3}'].values
-                
-                cos2_sum = (self.cos2_individus[f'Axe{axe1}'] + 
-                           self.cos2_individus[f'Axe{axe2}'] + 
-                           self.cos2_individus[f'Axe{axe3}'])
-                
-                scatter = ax.scatter(x, y, z, c=cos2_sum, s=40, 
-                                   cmap='YlOrRd', edgecolors='black', 
-                                   linewidth=0.3, alpha=0.6)
-                
-                fig.colorbar(scatter, ax=ax, shrink=0.5, pad=0.05)
-                ax.set_title(f'Vue {i+1}: Individus (elev={elev}°, azim={azim}°)', 
-                           fontsize=10, fontweight='bold')
-            
-            # Plans de référence
-            ax.plot([0, 0], [0, 0], [z.min(), z.max()], 'k-', alpha=0.2, linewidth=0.5)
-            ax.plot([0, 0], [y.min(), y.max()], [0, 0], 'k-', alpha=0.2, linewidth=0.5)
-            ax.plot([x.min(), x.max()], [0, 0], [0, 0], 'k-', alpha=0.2, linewidth=0.5)
-            
-            ax.set_xlabel(f'Axe {axe1}', fontsize=8)
-            ax.set_ylabel(f'Axe {axe2}', fontsize=8)
-            ax.set_zlabel(f'Axe {axe3}', fontsize=8)
-            ax.view_init(elev=elev, azim=azim)
+        mean1 = 100 / self.n
+        ax1.axvline(mean1, color='blue', linestyle='--', linewidth=2, 
+                   label=f'Moyenne = {mean1:.3f}%')
+        ax1.legend(fontsize=10)
+        
+        ctr2 = self.ctr_ind['Axe2'].sort_values(ascending=False)
+        top20_2 = ctr2.head(20)
+        
+        ax2.barh(range(len(top20_2)), top20_2.values, 
+                color='dodgerblue', edgecolor='black', linewidth=1.2, alpha=0.8)
+        ax2.set_yticks(range(len(top20_2)))
+        ax2.set_yticklabels(top20_2.index, fontsize=9)
+        ax2.set_xlabel('Contribution (%)', fontweight='bold', fontsize=11)
+        ax2.set_ylabel('Individus', fontweight='bold', fontsize=11)
+        ax2.set_title(f'Top 20 Individus - Contribution Axe 2\n({self.inertie_pct[1]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=13)
+        ax2.grid(axis='x', alpha=0.3)
+        ax2.invert_yaxis()
+        
+        mean2 = 100 / self.n
+        ax2.axvline(mean2, color='blue', linestyle='--', linewidth=2, 
+                   label=f'Moyenne = {mean2:.3f}%')
+        ax2.legend(fontsize=10)
         
         plt.tight_layout()
-        plt.show()
+        f = f"{self.dossier}/12_Contributions_individus/contrib_ind_axes.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"✓ Sauvegardé: {f}")
+        plt.close()
     
-    def rapport_complet(self, axes_a_analyser=[(1, 2)], color_by=None, 
-                       top_modalites=15, top_individus=10, graphes_3d=False):
-        """Génère le rapport complet conforme au cours"""
+    def rapport_complet(self):
+        """Génère tous les graphiques"""
         print("\n" + "="*80)
-        print("GÉNÉRATION DU RAPPORT ACM COMPLET")
+        print("GÉNÉRATION RAPPORT COMPLET")
         print("="*80 + "\n")
         
-        # 1. Tableau des inerties
-        print("1. Tableau des inerties...")
-        self.afficher_tableau_inerties()
+        print("0. Correction de Benzécri...")
+        self.plot_benzecri()
         
-        # 2. Scree plots
-        print("2. Graphiques des valeurs propres...")
+        print("\n1. Scree Plot...")
         self.plot_scree()
         
-        # 3. η² (rapport de corrélation)
-        print("3. Rapports de corrélation η²...")
-        self.afficher_eta2()
+        print("\n2. Graphe par variable...")
+        self.plot_par_variable()
         
-        # 4. Pour chaque paire d'axes
-        for axe1, axe2 in axes_a_analyser:
-            print(f"\n{'='*80}")
-            print(f"ANALYSE DES AXES {axe1} ET {axe2}")
-            print(f"{'='*80}\n")
-            
-            # Contributions des modalités
-            print(f"4.a) Top modalités - Axe {axe1}:")
-            self.afficher_contributions_modalites(axe=axe1, top_n=top_modalites)
-            
-            print(f"4.b) Top modalités - Axe {axe2}:")
-            self.afficher_contributions_modalites(axe=axe2, top_n=top_modalites)
-            
-            # Graphiques 2D
-            print(f"5. Projection des modalités (Axes {axe1}-{axe2})...")
-            self.plot_modalites(axes=(axe1, axe2), top_contrib=top_modalites)
-            
-            print(f"6. Modalités par variable (Axes {axe1}-{axe2})...")
-            self.plot_modalites_par_variable(axes=(axe1, axe2))
-            
-            print(f"7. Projection des individus (Axes {axe1}-{axe2})...")
-            self.plot_individus(axes=(axe1, axe2), color_by=color_by, 
-                              top_contrib=top_individus)
-            
-            print(f"8. Cercle des variables (Axes {axe1}-{axe2})...")
-            self.plot_variables_eta2(axes=(axe1, axe2))
+        print("\n3. Biplot (Top 15)...")
+        self.plot_biplot()
         
-        # 9. Graphiques 3D (si demandé)
-        if graphes_3d:
-            print("\n" + "="*80)
-            print("VISUALISATIONS 3D")
-            print("="*80 + "\n")
-            
-            print("9a. Projection 3D des modalités...")
-            self.plot_modalites_3d(axes=(1, 2, 3), top_contrib=top_modalites)
-            
-            print("9b. Modalités par variable en 3D...")
-            self.plot_modalites_par_variable_3d(axes=(1, 2, 3))
-            
-            print("9c. Projection 3D des individus...")
-            self.plot_individus_3d(axes=(1, 2, 3), color_by=color_by, 
-                                  top_contrib=top_individus)
-            
-            print("9d. Biplot 3D (individus + modalités)...")
-            self.plot_biplot_3d(axes=(1, 2, 3), color_by=color_by, 
-                               top_modalites=15)
-            
-            print("9e. Vues multiples 3D des modalités...")
-            self.animation_3d_interactive(axes=(1, 2, 3), plot_type='modalites')
-            
-            print("9f. Vues multiples 3D des individus...")
-            self.animation_3d_interactive(axes=(1, 2, 3), plot_type='individus')
+        print("\n4. Individus - Contribution...")
+        self.plot_ind_ctr()
         
-        # 10. Vérification des relations barycentriques
-        print("10. Vérification des relations barycentriques...")
-        self.verifier_relations_barycentriques()
+        print("\n5. Individus - Cos²...")
+        self.plot_ind_cos()
+        
+        print("\n6. Modalités - Cos²...")
+        self.plot_mod_cos()
+        
+        print("\n7. Modalités - Contribution...")
+        self.plot_mod_ctr()
+        
+        print("\n8. Modalités colorées par contribution...")
+        self.plot_modalites_contribution()
+        
+        print("\n9. Cercle de corrélation...")
+        self.plot_cercle_correlation()
+        
+        print("\n10. Histogrammes des variables...")
+        self.plot_histogrammes_variables()
+        
+        print("\n11. Biplot complet...")
+        self.plot_biplot_complet()
+        
+        print("\n12. Contributions individus par axes...")
+        self.plot_contributions_individus_axes()
         
         print("\n" + "="*80)
-        print("✓ RAPPORT ACM COMPLET GÉNÉRÉ")
+        print("✓ RAPPORT COMPLET GÉNÉRÉ")
+        print(f"✓ Tous les graphiques dans: {self.dossier}/")
         print("="*80)
 
 
-# ========== EXEMPLE D'UTILISATION ==========
+# ============================================================================
+# PARTIE 3: SCRIPT PRINCIPAL
+# ============================================================================
+
 if __name__ == "__main__":
+    
     print("\n" + "="*80)
-    print("ACM CONFORME AU COURS - ROTTERDAM BREAST CANCER")
+    print("ACM - ROTTERDAM BREAST CANCER DATASET")
+    print("ANALYSE COMPLÈTE AVEC CORRECTION DE BENZÉCRI")
     print("="*80 + "\n")
     
-    # ===== CHARGEMENT DES DONNÉES =====
+    # ÉTAPE 1: Création fichier nettoyé
+    print("ÉTAPE 1: CRÉATION FICHIER NETTOYÉ\n")
+    fichier_source = "RotterdamBreastCancer_df.csv"
+    fichier_clean = "data_clean.csv"
     
-    # --- Option 1: Rotterdam Breast Cancer ---
-    fichier = "RotterdamBreastCancer_df.csv"
-    df = pd.read_csv(fichier)
+    df = creer_fichier_nettoye(fichier_source, fichier_clean)
     
-    # Supprimer les colonnes non utilisées
-    if 'pid' in df.columns:
-        df = df.drop(['pid', 'rtime', 'dtime'], axis=1, errors='ignore')
+    # ÉTAPE 2: Analyse ACM complète
+    print("\nÉTAPE 2: ANALYSE ACM\n")
     
-    vars_quantitatives = ['age', 'nodes', 'pgr', 'er', 'year']
-    vars_qualitatives = ['meno', 'size', 'grade', 'hormon', 'chemo', 'recur', 'death']
-    color_by = 'death'
-    
-    # --- Option 2: Heart Disease (Décommentez pour l'utiliser) ---
-    # fichier = "heartdisease_tbl_df.csv"
-    # df = pd.read_csv(fichier)
-    # vars_quantitatives = ['Age', 'BP', 'Cholesterol', 'MaximumHR']
-    # vars_qualitatives = ['Sex', 'ChestPain', 'BloodSugar', 
-    #                     'ExerciseInducedAngina', 'HeartDisease']
-    # color_by = 'HeartDisease'
-    
-    print("Aperçu des données:")
-    print(df.head())
-    print(f"\nDimensions: {df.shape}\n")
-    
-    # ===== CRÉATION DE L'ANALYSEUR ACM =====
-    acm = ACM_Cours(
-        data=df,
-        vars_quanti=vars_quantitatives,
-        vars_quali=vars_qualitatives
-    )
-    
-    # ===== ÉTAPES DE L'ACM =====
-    
-    # Étape 1: Discrétisation
-    acm.discretiser_variables(methode='quantiles', n_classes=4)
-    
-    # Étape 2: Préparation TDC
+    acm = ACM_BreastCancer(data=df, dossier="graphes_acm")
+    acm.discretiser_age(n_classes=4)
     acm.prepare_acm()
-    
-    # Étape 3: Calcul ACM
-    acm.compute_acm(n_components=5)
-    
-    # Étape 4: Contributions et qualités
+    acm.compute_acm(n_comp=5)
+    acm.correction_benzecri()
     acm.compute_contributions()
+    acm.rapport_complet()
     
-    # Étape 5: Rapport complet
-    acm.rapport_complet(
-        axes_a_analyser=[(1, 2), (1, 3), (2, 3)],
-        color_by=color_by,
-        top_modalites=20,
-        top_individus=15,
-        graphes_3d=True  # ✨ ACTIVER LES GRAPHIQUES 3D ✨
-    )
-    
-    # ===== GRAPHIQUES 3D SUPPLÉMENTAIRES (utilisation directe) =====
+    # ÉTAPE 3: Résultats numériques
     print("\n" + "="*80)
-    print("GRAPHIQUES 3D SUPPLÉMENTAIRES")
+    print("RÉSULTATS NUMÉRIQUES")
     print("="*80 + "\n")
     
-    # Exemple 1: Modalités 3D avec rotation personnalisée
-    print("Modalités 3D - Vue personnalisée...")
-    acm.plot_modalites_3d(axes=(1, 2, 3), top_contrib=15, rotation=(45, 60))
+    print("=" * 60)
+    print("CORRECTION DE BENZÉCRI - RÉSUMÉ")
+    print("=" * 60)
+    print(f"Inertie totale originale : {acm.I_tot:.4f}")
+    print(f"Inertie totale corrigée  : {acm.I_corr:.4f}")
+    print(f"Seuil 1/p : {1/acm.p:.4f}\n")
     
-    # Exemple 2: Individus 3D
-    print("Individus 3D avec coloration...")
-    acm.plot_individus_3d(axes=(1, 2, 3), color_by=color_by, top_contrib=10, rotation=(30, 120))
+    print("=" * 60)
+    print("TOP 10 MODALITÉS - CONTRIBUTION AXE 1")
+    print("=" * 60)
+    print(acm.ctr_mod['Axe1'].sort_values(ascending=False).head(10))
     
-    # Exemple 3: Biplot 3D
-    print("Biplot 3D - Individus et modalités ensemble...")
-    acm.plot_biplot_3d(axes=(1, 2, 3), color_by=color_by, top_modalites=12, rotation=(20, 45))
+    print("\n" + "=" * 60)
+    print("TOP 10 MODALITÉS - CONTRIBUTION AXE 2")
+    print("=" * 60)
+    print(acm.ctr_mod['Axe2'].sort_values(ascending=False).head(10))
     
-    # Exemple 4: Animation multi-vues
-    print("Vues multiples des modalités...")
-    acm.animation_3d_interactive(axes=(1, 2, 3), plot_type='modalites')
+    print("\n" + "=" * 60)
+    print("TOP 10 MODALITÉS - COS² (AXE1+AXE2)")
+    print("=" * 60)
+    cos2_tot = acm.cos2_mod['Axe1'] + acm.cos2_mod['Axe2']
+    print(cos2_tot.sort_values(ascending=False).head(10))
     
-    print("Vues multiples des individus...")
-    acm.animation_3d_interactive(axes=(1, 2, 3), plot_type='individus')
+    print("\n" + "=" * 60)
+    print("TOP 10 INDIVIDUS - CONTRIBUTION AXE 1")
+    print("=" * 60)
+    print(acm.ctr_ind['Axe1'].sort_values(ascending=False).head(10))
     
-    # ===== RÉSULTATS NUMÉRIQUES SUPPLÉMENTAIRES =====
-    print("\n" + "="*80)
-    print("RÉSULTATS NUMÉRIQUES COMPLÉMENTAIRES")
-    print("="*80 + "\n")
-    
-    print("1. INERTIE PAR VARIABLE:")
-    print("-"*60)
-    for var in acm.vars_quali_toutes:
-        m_j = acm.modalites_info[var]['m_j']
-        inertie_var = (1/acm.p) * (m_j - 1)
-        print(f"{var:30s}: m_j = {m_j}, Inertie = {inertie_var:.4f}")
-    
-    print(f"\n{'Total':30s}: I_totale = {acm.I_totale_theorique:.4f}")
-    
-    print("\n2. TOP 10 CONTRIBUTIONS INDIVIDUS - AXE 1:")
-    print("-"*60)
-    top_ind = acm.ctr_individus['Axe1'].sort_values(ascending=False).head(10)
-    for idx, val in top_ind.items():
-        print(f"Individu {idx}: {val:.2f}%")
-    
-    print("\n3. EFFECTIFS DES MODALITÉS:")
-    print("-"*60)
-    print(acm.n_j.sort_values(ascending=False).head(15))
+    print("\n" + "=" * 60)
+    print("TOP 10 INDIVIDUS - CONTRIBUTION AXE 2")
+    print("=" * 60)
+    print(acm.ctr_ind['Axe2'].sort_values(ascending=False).head(10))
     
     print("\n" + "="*80)
-    print("✓ ANALYSE ACM TERMINÉE")
+    print("✓ ANALYSE ACM TERMINÉE AVEC SUCCÈS")
+    print(f"✓ Fichier nettoyé: {fichier_clean}")
+    print(f"✓ Graphiques disponibles dans: {acm.dossier}/")
+    print(f"✓ Total graphiques générés: 13 (dont correction Benzécri)")
     print("="*80)
