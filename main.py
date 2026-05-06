@@ -160,15 +160,11 @@ class ACM_BreastCancer:
             f"{self.dossier}/01_Scree_Plot",
             f"{self.dossier}/02_Graphe_par_variable",
             f"{self.dossier}/03_Biplot",
-            f"{self.dossier}/04_Ind_Ctr",
-            f"{self.dossier}/05_Ind_cos",
-            f"{self.dossier}/06_Modalite_cos",
-            f"{self.dossier}/07_Mod_Ctr",
-            f"{self.dossier}/08_Modalite_contribution",
-            f"{self.dossier}/09_Cercle_correlation",
-            f"{self.dossier}/10_Histogrammes",
-            f"{self.dossier}/11_Biplot_complet",
-            f"{self.dossier}/12_Contributions_individus"
+            f"{self.dossier}/04_Modalites_Contributions",
+            f"{self.dossier}/05_Modalites_Cos2",
+            f"{self.dossier}/06_Individus_Contributions",
+            f"{self.dossier}/07_Individus_Cos2",
+            f"{self.dossier}/08_Export_CSV"
         ]
         for d in dossiers:
             Path(d).mkdir(parents=True, exist_ok=True)
@@ -345,7 +341,7 @@ class ACM_BreastCancer:
         print("✓ Contributions et Cos² calculés\n")
     
     # ========================================================================
-    # GRAPHIQUES
+    # GRAPHIQUES AMÉLIORÉS
     # ========================================================================
     
     def plot_benzecri(self):
@@ -416,7 +412,6 @@ class ACM_BreastCancer:
         table.set_fontsize(9)
         table.scale(1, 2.2)
         
-        # Colorer l'en-tête
         for i in range(5):
             table[(0, i)].set_facecolor('#40466e')
             table[(0, i)].set_text_props(weight='bold', color='white')
@@ -437,7 +432,6 @@ class ACM_BreastCancer:
         n = len(self.lambda_k)
         labels = [f'{k+1}' for k in range(n)]
         
-        # Valeurs propres
         ax1.bar(labels, self.lambda_k, color='steelblue', alpha=0.8)
         ax1.axhline(1/self.p, color='red', linestyle='--', linewidth=2,
                    label=f'Seuil 1/p = {1/self.p:.3f}')
@@ -447,7 +441,6 @@ class ACM_BreastCancer:
         ax1.legend()
         ax1.grid(alpha=0.3)
         
-        # Inertie cumulée
         ax2.plot(labels, self.inertie_cum, marker='o', linewidth=2, color='darkgreen')
         ax2.fill_between(range(n), self.inertie_cum, alpha=0.3, color='green')
         ax2.set_xlabel('Axes', fontweight='bold')
@@ -455,14 +448,12 @@ class ACM_BreastCancer:
         ax2.set_title('Inertie Cumulée', fontweight='bold', fontsize=14)
         ax2.grid(alpha=0.3)
         
-        # Inertie par axe
         ax3.bar(labels, self.inertie_pct, color='orange', alpha=0.8)
         ax3.set_xlabel('Axes', fontweight='bold')
         ax3.set_ylabel('% Inertie', fontweight='bold')
         ax3.set_title('Inertie par Axe', fontweight='bold', fontsize=14)
         ax3.grid(alpha=0.3)
         
-        # Tableau
         ax4.axis('off')
         data = [[f'Axe {k+1}', f'{self.lambda_k[k]:.4f}',
                 f'{self.inertie_pct[k]:.2f}%', f'{self.inertie_cum[k]:.2f}%']
@@ -526,321 +517,10 @@ class ACM_BreastCancer:
         plt.close()
     
     def plot_biplot(self):
-        """Biplot"""
-        fig, ax = plt.subplots(figsize=(14, 12))
-        
-        # Individus par death
-        x_ind = self.coord_ind['Axe1'].values
-        y_ind = self.coord_ind['Axe2'].values
-        
-        if 'death' in self.data.columns:
-            for val, color, label in [(0, 'lightblue', 'Vivant'),
-                                      (1, 'red', 'Décédé')]:
-                mask = self.data['death'] == val
-                ax.scatter(x_ind[mask], y_ind[mask], s=30, alpha=0.4,
-                          color=color, edgecolors='k', lw=0.3, label=label)
-        else:
-            ax.scatter(x_ind, y_ind, s=30, alpha=0.4, color='gray',
-                      edgecolors='k', lw=0.3, label='Individus')
-        
-        # Top modalités
-        contrib = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
-        top = contrib.nlargest(15).index
-        
-        x_mod = self.coord_mod.loc[top, 'Axe1'].values
-        y_mod = self.coord_mod.loc[top, 'Axe2'].values
-        
-        ax.scatter(x_mod, y_mod, s=200, alpha=0.9, color='darkgreen',
-                  edgecolors='k', lw=2, marker='^', label='Modalités')
-        
-        for idx in top:
-            x = self.coord_mod.loc[idx, 'Axe1']
-            y = self.coord_mod.loc[idx, 'Axe2']
-            ax.text(x, y, idx, fontsize=8, fontweight='bold', color='darkgreen')
-        
-        ax.axhline(0, color='k', lw=1, alpha=0.5)
-        ax.axvline(0, color='k', lw=1, alpha=0.5)
-        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax.set_title('Biplot (Top 15 Modalités)', fontweight='bold', fontsize=14)
-        ax.legend()
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/03_Biplot/biplot.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_ind_ctr(self):
-        """Individus contribution"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
-        
-        x = self.coord_ind['Axe1'].values
-        y = self.coord_ind['Axe2'].values
-        
-        # Axe 1
-        c1 = self.ctr_ind['Axe1']
-        sc1 = ax1.scatter(x, y, c=c1, s=50, cmap='Reds',
-                         edgecolors='k', lw=0.5, alpha=0.7)
-        ax1.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax1.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc1, ax=ax1, label='Contribution (%)')
-        ax1.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax1.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax1.set_title('Contribution Axe 1', fontweight='bold')
-        ax1.grid(alpha=0.3)
-        
-        # Axe 2
-        c2 = self.ctr_ind['Axe2']
-        sc2 = ax2.scatter(x, y, c=c2, s=50, cmap='Blues',
-                         edgecolors='k', lw=0.5, alpha=0.7)
-        ax2.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax2.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc2, ax=ax2, label='Contribution (%)')
-        ax2.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax2.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax2.set_title('Contribution Axe 2', fontweight='bold')
-        ax2.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/04_Ind_Ctr/ind_ctr.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_ind_cos(self):
-        """Individus cos²"""
-        fig, ax = plt.subplots(figsize=(12, 10))
-        
-        x = self.coord_ind['Axe1'].values
-        y = self.coord_ind['Axe2'].values
-        cos2 = self.cos2_ind['Axe1'] + self.cos2_ind['Axe2']
-        
-        sc = ax.scatter(x, y, c=cos2, s=50, cmap='YlOrRd',
-                       edgecolors='k', lw=0.5, alpha=0.7)
-        ax.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc, ax=ax, label='Cos²')
-        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax.set_title('Qualité Représentation (Cos²)', fontweight='bold', fontsize=14)
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/05_Ind_cos/ind_cos2.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_mod_cos(self):
-        """Modalités cos²"""
-        fig, ax = plt.subplots(figsize=(14, 12))
-        
-        x = self.coord_mod['Axe1'].values
-        y = self.coord_mod['Axe2'].values
-        cos2 = self.cos2_mod['Axe1'] + self.cos2_mod['Axe2']
-        
-        sc = ax.scatter(x, y, c=cos2, s=100, cmap='plasma',
-                       edgecolors='k', lw=1, alpha=0.8)
-        
-        # Top 15
-        top = cos2.nlargest(15).index
-        for idx in top:
-            pos = self.coord_mod.index.get_loc(idx)
-            ax.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
-        
-        ax.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc, ax=ax, label='Cos²')
-        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax.set_title('Modalités - Cos²', fontweight='bold', fontsize=14)
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/06_Modalite_cos/mod_cos2.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_mod_ctr(self):
-        """Modalités contribution"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 10))
-        
-        x = self.coord_mod['Axe1'].values
-        y = self.coord_mod['Axe2'].values
-        
-        # Axe 1
-        c1 = self.ctr_mod['Axe1']
-        sc1 = ax1.scatter(x, y, c=c1, s=100, cmap='Reds',
-                         edgecolors='k', lw=1, alpha=0.8)
-        top1 = c1.nlargest(10).index
-        for idx in top1:
-            pos = self.coord_mod.index.get_loc(idx)
-            ax1.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
-        
-        ax1.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax1.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc1, ax=ax1, label='Contribution (%)')
-        ax1.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax1.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax1.set_title('Modalités - Contribution Axe 1', fontweight='bold')
-        ax1.grid(alpha=0.3)
-        
-        # Axe 2
-        c2 = self.ctr_mod['Axe2']
-        sc2 = ax2.scatter(x, y, c=c2, s=100, cmap='Blues',
-                         edgecolors='k', lw=1, alpha=0.8)
-        top2 = c2.nlargest(10).index
-        for idx in top2:
-            pos = self.coord_mod.index.get_loc(idx)
-            ax2.text(x[pos], y[pos], idx, fontsize=7, fontweight='bold')
-        
-        ax2.axhline(0, color='k', lw=0.5, alpha=0.5)
-        ax2.axvline(0, color='k', lw=0.5, alpha=0.5)
-        plt.colorbar(sc2, ax=ax2, label='Contribution (%)')
-        ax2.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold')
-        ax2.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold')
-        ax2.set_title('Modalités - Contribution Axe 2', fontweight='bold')
-        ax2.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/07_Mod_Ctr/mod_ctr.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_modalites_contribution(self):
-        """Modalités colorées par contribution totale"""
-        fig, ax = plt.subplots(figsize=(14, 12))
-        
-        x = self.coord_mod['Axe1'].values
-        y = self.coord_mod['Axe2'].values
-        contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
-        
-        sc = ax.scatter(x, y, c=contrib_tot, s=150, cmap='RdYlGn_r',
-                       edgecolors='black', lw=1.5, alpha=0.8)
-        
-        for idx in self.coord_mod.index:
-            pos = self.coord_mod.index.get_loc(idx)
-            ax.text(x[pos], y[pos], idx, fontsize=7, ha='center', 
-                   va='center', fontweight='bold')
-        
-        ax.axhline(0, color='k', lw=1, alpha=0.5)
-        ax.axvline(0, color='k', lw=1, alpha=0.5)
-        
-        plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
-        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
-        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
-        ax.set_title('Modalités Colorées par Contribution Totale (Axe1 + Axe2)', 
-                    fontweight='bold', fontsize=14)
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/08_Modalite_contribution/mod_contrib_color.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_cercle_correlation(self):
-        """Cercle de corrélation avec toutes les modalités"""
-        fig, ax = plt.subplots(figsize=(14, 14))
-        
-        circle = plt.Circle((0, 0), 1, color='navy', fill=False, linewidth=2, linestyle='--')
-        ax.add_patch(circle)
-        
-        x = self.coord_mod['Axe1'].values
-        y = self.coord_mod['Axe2'].values
-        
-        norms = np.sqrt(x**2 + y**2)
-        x_norm = x / norms
-        y_norm = y / norms
-        
-        contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
-        
-        for i, idx in enumerate(self.coord_mod.index):
-            ax.arrow(0, 0, x_norm[i]*0.95, y_norm[i]*0.95,
-                    head_width=0.03, head_length=0.03, fc='gray', 
-                    ec='gray', alpha=0.6, lw=1)
-        
-        sc = ax.scatter(x_norm, y_norm, c=contrib_tot, s=100, 
-                       cmap='RdYlGn_r', edgecolors='black', lw=1.5, 
-                       alpha=0.8, zorder=10)
-        
-        for i, idx in enumerate(self.coord_mod.index):
-            ax.text(x_norm[i]*1.08, y_norm[i]*1.08, idx, 
-                   fontsize=7, ha='center', va='center', fontweight='bold')
-        
-        ax.axhline(0, color='k', lw=1, alpha=0.5)
-        ax.axvline(0, color='k', lw=1, alpha=0.5)
-        
-        ax.set_xlim(-1.2, 1.2)
-        ax.set_ylim(-1.2, 1.2)
-        ax.set_aspect('equal')
-        
-        plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
-        ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
-        ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
-        ax.set_title('Cercle de Corrélation - Toutes les Modalités', 
-                    fontweight='bold', fontsize=14)
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/09_Cercle_correlation/cercle_corr.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_histogrammes_variables(self):
-        """Histogrammes de chaque variable montrant les modalités"""
-        n_vars = len(self.vars_toutes)
-        n_cols = 3
-        n_rows = (n_vars + n_cols - 1) // n_cols
-        
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 5*n_rows))
-        axes = axes.flatten() if n_vars > 1 else [axes]
-        
-        colors = plt.cm.Set3(np.linspace(0, 1, 12))
-        
-        for idx, var in enumerate(self.vars_toutes):
-            ax = axes[idx]
-            
-            counts = self.data_disc[var].value_counts().sort_index()
-            modalites = counts.index
-            effectifs = counts.values
-            
-            bars = ax.bar(range(len(modalites)), effectifs, 
-                         color=colors[:len(modalites)], 
-                         edgecolor='black', linewidth=1.5, alpha=0.8)
-            
-            ax.set_xticks(range(len(modalites)))
-            ax.set_xticklabels(modalites, rotation=45, ha='right')
-            ax.set_xlabel('Modalités', fontweight='bold', fontsize=10)
-            ax.set_ylabel('Effectif', fontweight='bold', fontsize=10)
-            ax.set_title(f'{var} (n={len(modalites)} modalités)', 
-                        fontweight='bold', fontsize=12)
-            ax.grid(axis='y', alpha=0.3)
-            
-            for i, (bar, val) in enumerate(zip(bars, effectifs)):
-                height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height,
-                       f'{val}\n({val/self.n*100:.1f}%)',
-                       ha='center', va='bottom', fontsize=8, fontweight='bold')
-        
-        for idx in range(n_vars, len(axes)):
-            axes[idx].axis('off')
-        
-        plt.tight_layout()
-        f = f"{self.dossier}/10_Histogrammes/histogrammes_variables.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
-        plt.close()
-    
-    def plot_biplot_complet(self):
-        """Biplot avec individus et toutes les modalités"""
+        """Biplot avec toutes les modalités"""
         fig, ax = plt.subplots(figsize=(16, 14))
         
+        # Individus
         x_ind = self.coord_ind['Axe1'].values
         y_ind = self.coord_ind['Axe2'].values
         
@@ -854,6 +534,7 @@ class ACM_BreastCancer:
             ax.scatter(x_ind, y_ind, s=20, alpha=0.3, color='gray',
                       edgecolors='k', lw=0.2, label='Individus')
         
+        # Modalités
         x_mod = self.coord_mod['Axe1'].values
         y_mod = self.coord_mod['Axe2'].values
         contrib_tot = self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']
@@ -873,69 +554,451 @@ class ACM_BreastCancer:
         plt.colorbar(sc, ax=ax, label='Contribution Totale (%)')
         ax.set_xlabel(f'Axe 1 ({self.inertie_pct[0]:.1f}%)', fontweight='bold', fontsize=12)
         ax.set_ylabel(f'Axe 2 ({self.inertie_pct[1]:.1f}%)', fontweight='bold', fontsize=12)
-        ax.set_title('Biplot Complet - Individus et Toutes les Modalités', 
-                    fontweight='bold', fontsize=14)
+        ax.set_title('Biplot - Individus et Modalités', fontweight='bold', fontsize=14)
         ax.legend(loc='best', fontsize=10)
         ax.grid(alpha=0.3)
         
         plt.tight_layout()
-        f = f"{self.dossier}/11_Biplot_complet/biplot_complet.png"
+        f = f"{self.dossier}/03_Biplot/biplot_complet.png"
         plt.savefig(f, dpi=300, bbox_inches='tight')
         print(f"✓ Sauvegardé: {f}")
         plt.close()
     
-    def plot_contributions_individus_axes(self):
-        """Contributions des individus dans Axe 1 et Axe 2"""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
+    # ========================================================================
+    # HISTOGRAMMES MODALITÉS - CONTRIBUTIONS PAR AXE
+    # ========================================================================
+    
+    def plot_modalites_contributions_axes(self):
+        """Histogrammes horizontaux des contributions des modalités (TOP 20 par axe)"""
+        print("\n4. Modalités - Contributions par axe (TOP 20)...")
         
-        ctr1 = self.ctr_ind['Axe1'].sort_values(ascending=False)
-        top20_1 = ctr1.head(20)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 12))
         
-        ax1.barh(range(len(top20_1)), top20_1.values, 
-                color='crimson', edgecolor='black', linewidth=1.2, alpha=0.8)
-        ax1.set_yticks(range(len(top20_1)))
-        ax1.set_yticklabels(top20_1.index, fontsize=9)
-        ax1.set_xlabel('Contribution (%)', fontweight='bold', fontsize=11)
-        ax1.set_ylabel('Individus', fontweight='bold', fontsize=11)
-        ax1.set_title(f'Top 20 Individus - Contribution Axe 1\n({self.inertie_pct[0]:.1f}% inertie)', 
-                     fontweight='bold', fontsize=13)
-        ax1.grid(axis='x', alpha=0.3)
+        # AXE 1
+        ctr_axe1 = self.ctr_mod['Axe1'].sort_values(ascending=False).head(20)
+        colors1 = plt.cm.Reds(np.linspace(0.4, 0.9, len(ctr_axe1)))
+        
+        y_pos = np.arange(len(ctr_axe1))
+        ax1.barh(y_pos, ctr_axe1.values, color=colors1, edgecolor='black', linewidth=1.2)
+        ax1.set_yticks(y_pos)
+        ax1.set_yticklabels(ctr_axe1.index, fontsize=10, fontweight='bold')
+        ax1.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax1.set_ylabel('Modalités', fontweight='bold', fontsize=12)
+        ax1.set_title(f'TOP 20 Modalités - Contribution Axe 1\n({self.inertie_pct[0]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=14)
         ax1.invert_yaxis()
+        ax1.grid(axis='x', alpha=0.3)
         
-        mean1 = 100 / self.n
-        ax1.axvline(mean1, color='blue', linestyle='--', linewidth=2, 
-                   label=f'Moyenne = {mean1:.3f}%')
+        # Ligne moyenne
+        mean1 = self.ctr_mod['Axe1'].mean()
+        ax1.axvline(mean1, color='blue', linestyle='--', linewidth=2.5, 
+                   label=f'Moyenne = {mean1:.2f}%', alpha=0.8)
+        ax1.legend(fontsize=11)
+        
+        # Ajouter valeurs
+        for i, v in enumerate(ctr_axe1.values):
+            ax1.text(v + 0.3, i, f'{v:.2f}%', va='center', fontsize=9, fontweight='bold')
+        
+        # AXE 2
+        ctr_axe2 = self.ctr_mod['Axe2'].sort_values(ascending=False).head(20)
+        colors2 = plt.cm.Blues(np.linspace(0.4, 0.9, len(ctr_axe2)))
+        
+        y_pos2 = np.arange(len(ctr_axe2))
+        ax2.barh(y_pos2, ctr_axe2.values, color=colors2, edgecolor='black', linewidth=1.2)
+        ax2.set_yticks(y_pos2)
+        ax2.set_yticklabels(ctr_axe2.index, fontsize=10, fontweight='bold')
+        ax2.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax2.set_ylabel('Modalités', fontweight='bold', fontsize=12)
+        ax2.set_title(f'TOP 20 Modalités - Contribution Axe 2\n({self.inertie_pct[1]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=14)
+        ax2.invert_yaxis()
+        ax2.grid(axis='x', alpha=0.3)
+        
+        mean2 = self.ctr_mod['Axe2'].mean()
+        ax2.axvline(mean2, color='blue', linestyle='--', linewidth=2.5, 
+                   label=f'Moyenne = {mean2:.2f}%', alpha=0.8)
+        ax2.legend(fontsize=11)
+        
+        for i, v in enumerate(ctr_axe2.values):
+            ax2.text(v + 0.3, i, f'{v:.2f}%', va='center', fontsize=9, fontweight='bold')
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/04_Modalites_Contributions/modalites_contrib_axes.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f}")
+        plt.close()
+    
+    def plot_modalites_cos2_axes(self):
+        """Histogrammes horizontaux des Cos² des modalités (TOP 20 par axe)"""
+        print("\n5. Modalités - Cos² par axe (TOP 20)...")
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 12))
+        
+        # AXE 1
+        cos2_axe1 = self.cos2_mod['Axe1'].sort_values(ascending=False).head(20)
+        colors1 = plt.cm.YlOrRd(np.linspace(0.3, 0.9, len(cos2_axe1)))
+        
+        y_pos = np.arange(len(cos2_axe1))
+        ax1.barh(y_pos, cos2_axe1.values, color=colors1, edgecolor='black', linewidth=1.2)
+        ax1.set_yticks(y_pos)
+        ax1.set_yticklabels(cos2_axe1.index, fontsize=10, fontweight='bold')
+        ax1.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax1.set_ylabel('Modalités', fontweight='bold', fontsize=12)
+        ax1.set_title(f'TOP 20 Modalités - Cos² Axe 1\n({self.inertie_pct[0]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=14)
+        ax1.invert_yaxis()
+        ax1.grid(axis='x', alpha=0.3)
+        
+        mean1 = self.cos2_mod['Axe1'].mean()
+        ax1.axvline(mean1, color='darkgreen', linestyle='--', linewidth=2.5, 
+                   label=f'Moyenne = {mean1:.3f}', alpha=0.8)
+        ax1.legend(fontsize=11)
+        
+        for i, v in enumerate(cos2_axe1.values):
+            ax1.text(v + 0.01, i, f'{v:.3f}', va='center', fontsize=9, fontweight='bold')
+        
+        # AXE 2
+        cos2_axe2 = self.cos2_mod['Axe2'].sort_values(ascending=False).head(20)
+        colors2 = plt.cm.plasma(np.linspace(0.2, 0.9, len(cos2_axe2)))
+        
+        y_pos2 = np.arange(len(cos2_axe2))
+        ax2.barh(y_pos2, cos2_axe2.values, color=colors2, edgecolor='black', linewidth=1.2)
+        ax2.set_yticks(y_pos2)
+        ax2.set_yticklabels(cos2_axe2.index, fontsize=10, fontweight='bold')
+        ax2.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax2.set_ylabel('Modalités', fontweight='bold', fontsize=12)
+        ax2.set_title(f'TOP 20 Modalités - Cos² Axe 2\n({self.inertie_pct[1]:.1f}% inertie)', 
+                     fontweight='bold', fontsize=14)
+        ax2.invert_yaxis()
+        ax2.grid(axis='x', alpha=0.3)
+        
+        mean2 = self.cos2_mod['Axe2'].mean()
+        ax2.axvline(mean2, color='darkgreen', linestyle='--', linewidth=2.5, 
+                   label=f'Moyenne = {mean2:.3f}', alpha=0.8)
+        ax2.legend(fontsize=11)
+        
+        for i, v in enumerate(cos2_axe2.values):
+            ax2.text(v + 0.01, i, f'{v:.3f}', va='center', fontsize=9, fontweight='bold')
+        
+        plt.tight_layout()
+        f = f"{self.dossier}/05_Modalites_Cos2/modalites_cos2_axes.png"
+        plt.savefig(f, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f}")
+        plt.close()
+    
+    # ========================================================================
+    # HISTOGRAMMES INDIVIDUS - CONTRIBUTIONS PAR AXE (INTELLIGENTS)
+    # ========================================================================
+    
+    def plot_individus_contributions_intelligents(self):
+        """
+        Histogrammes des contributions des individus:
+        - Séparation forte contribution vs faible contribution
+        - Gestion automatique si trop d'individus
+        """
+        print("\n6. Individus - Contributions par axe (intelligent)...")
+        
+        # Seuil contribution significative (>moyenne)
+        mean_contrib_1 = 100 / self.n
+        mean_contrib_2 = 100 / self.n
+        
+        # AXE 1
+        ctr1 = self.ctr_ind['Axe1'].sort_values(ascending=False)
+        high_contrib_1 = ctr1[ctr1 > mean_contrib_1]
+        low_contrib_1 = ctr1[ctr1 <= mean_contrib_1]
+        
+        # AXE 2
+        ctr2 = self.ctr_ind['Axe2'].sort_values(ascending=False)
+        high_contrib_2 = ctr2[ctr2 > mean_contrib_2]
+        low_contrib_2 = ctr2[ctr2 <= mean_contrib_2]
+        
+        # ===== GRAPHIQUE 1: FORTES CONTRIBUTIONS =====
+        fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, max(10, len(high_contrib_1)*0.25)))
+        
+        # Axe 1 - Fortes contributions
+        y_pos1 = np.arange(len(high_contrib_1))
+        colors1 = plt.cm.Reds(np.linspace(0.5, 0.95, len(high_contrib_1)))
+        
+        ax1.barh(y_pos1, high_contrib_1.values, color=colors1, 
+                edgecolor='black', linewidth=1.0, alpha=0.85)
+        ax1.set_yticks(y_pos1)
+        ax1.set_yticklabels(high_contrib_1.index, fontsize=8, fontweight='bold')
+        ax1.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax1.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax1.set_title(f'Individus FORTE Contribution Axe 1\n({self.inertie_pct[0]:.1f}% inertie) - {len(high_contrib_1)} individus > moyenne',
+                     fontweight='bold', fontsize=13)
+        ax1.invert_yaxis()
+        ax1.grid(axis='x', alpha=0.3)
+        ax1.axvline(mean_contrib_1, color='blue', linestyle='--', linewidth=2.5,
+                   label=f'Moyenne = {mean_contrib_1:.3f}%', alpha=0.8)
         ax1.legend(fontsize=10)
         
-        ctr2 = self.ctr_ind['Axe2'].sort_values(ascending=False)
-        top20_2 = ctr2.head(20)
+        # Axe 2 - Fortes contributions
+        y_pos2 = np.arange(len(high_contrib_2))
+        colors2 = plt.cm.Blues(np.linspace(0.5, 0.95, len(high_contrib_2)))
         
-        ax2.barh(range(len(top20_2)), top20_2.values, 
-                color='dodgerblue', edgecolor='black', linewidth=1.2, alpha=0.8)
-        ax2.set_yticks(range(len(top20_2)))
-        ax2.set_yticklabels(top20_2.index, fontsize=9)
-        ax2.set_xlabel('Contribution (%)', fontweight='bold', fontsize=11)
-        ax2.set_ylabel('Individus', fontweight='bold', fontsize=11)
-        ax2.set_title(f'Top 20 Individus - Contribution Axe 2\n({self.inertie_pct[1]:.1f}% inertie)', 
+        ax2.barh(y_pos2, high_contrib_2.values, color=colors2,
+                edgecolor='black', linewidth=1.0, alpha=0.85)
+        ax2.set_yticks(y_pos2)
+        ax2.set_yticklabels(high_contrib_2.index, fontsize=8, fontweight='bold')
+        ax2.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax2.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax2.set_title(f'Individus FORTE Contribution Axe 2\n({self.inertie_pct[1]:.1f}% inertie) - {len(high_contrib_2)} individus > moyenne',
                      fontweight='bold', fontsize=13)
-        ax2.grid(axis='x', alpha=0.3)
         ax2.invert_yaxis()
-        
-        mean2 = 100 / self.n
-        ax2.axvline(mean2, color='blue', linestyle='--', linewidth=2, 
-                   label=f'Moyenne = {mean2:.3f}%')
+        ax2.grid(axis='x', alpha=0.3)
+        ax2.axvline(mean_contrib_2, color='blue', linestyle='--', linewidth=2.5,
+                   label=f'Moyenne = {mean_contrib_2:.3f}%', alpha=0.8)
         ax2.legend(fontsize=10)
         
         plt.tight_layout()
-        f = f"{self.dossier}/12_Contributions_individus/contrib_ind_axes.png"
-        plt.savefig(f, dpi=300, bbox_inches='tight')
-        print(f"✓ Sauvegardé: {f}")
+        f1 = f"{self.dossier}/06_Individus_Contributions/individus_FORTE_contribution.png"
+        plt.savefig(f1, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f1}")
         plt.close()
+        
+        # ===== GRAPHIQUE 2: FAIBLES CONTRIBUTIONS (TOP 50) =====
+        fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(22, 14))
+        
+        # Limiter à top 50 pour lisibilité
+        low_contrib_1_top = low_contrib_1.head(50)
+        low_contrib_2_top = low_contrib_2.head(50)
+        
+        # Axe 1 - Faibles contributions
+        y_pos3 = np.arange(len(low_contrib_1_top))
+        colors3 = plt.cm.Greys(np.linspace(0.3, 0.7, len(low_contrib_1_top)))
+        
+        ax3.barh(y_pos3, low_contrib_1_top.values, color=colors3,
+                edgecolor='black', linewidth=0.8, alpha=0.7)
+        ax3.set_yticks(y_pos3)
+        ax3.set_yticklabels(low_contrib_1_top.index, fontsize=7)
+        ax3.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax3.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax3.set_title(f'Individus FAIBLE Contribution Axe 1 (TOP 50)\n({len(low_contrib_1)} total ≤ moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax3.invert_yaxis()
+        ax3.grid(axis='x', alpha=0.3)
+        ax3.axvline(mean_contrib_1, color='red', linestyle='--', linewidth=2,
+                   label=f'Moyenne = {mean_contrib_1:.3f}%', alpha=0.8)
+        ax3.legend(fontsize=10)
+        
+        # Axe 2 - Faibles contributions
+        y_pos4 = np.arange(len(low_contrib_2_top))
+        colors4 = plt.cm.Greys(np.linspace(0.3, 0.7, len(low_contrib_2_top)))
+        
+        ax4.barh(y_pos4, low_contrib_2_top.values, color=colors4,
+                edgecolor='black', linewidth=0.8, alpha=0.7)
+        ax4.set_yticks(y_pos4)
+        ax4.set_yticklabels(low_contrib_2_top.index, fontsize=7)
+        ax4.set_xlabel('Contribution (%)', fontweight='bold', fontsize=12)
+        ax4.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax4.set_title(f'Individus FAIBLE Contribution Axe 2 (TOP 50)\n({len(low_contrib_2)} total ≤ moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax4.invert_yaxis()
+        ax4.grid(axis='x', alpha=0.3)
+        ax4.axvline(mean_contrib_2, color='red', linestyle='--', linewidth=2,
+                   label=f'Moyenne = {mean_contrib_2:.3f}%', alpha=0.8)
+        ax4.legend(fontsize=10)
+        
+        plt.tight_layout()
+        f2 = f"{self.dossier}/06_Individus_Contributions/individus_FAIBLE_contribution_top50.png"
+        plt.savefig(f2, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f2}")
+        plt.close()
+        
+        print(f"  ✓ Axe 1: {len(high_contrib_1)} fortes contrib, {len(low_contrib_1)} faibles contrib")
+        print(f"  ✓ Axe 2: {len(high_contrib_2)} fortes contrib, {len(low_contrib_2)} faibles contrib")
+    
+    def plot_individus_cos2_intelligents(self):
+        """
+        Histogrammes des Cos² des individus:
+        - Séparation bonne vs mauvaise qualité de représentation
+        """
+        print("\n7. Individus - Cos² par axe (intelligent)...")
+        
+        # Seuils
+        mean_cos2_1 = self.cos2_ind['Axe1'].mean()
+        mean_cos2_2 = self.cos2_ind['Axe2'].mean()
+        
+        # AXE 1
+        cos2_1 = self.cos2_ind['Axe1'].sort_values(ascending=False)
+        good_1 = cos2_1[cos2_1 > mean_cos2_1]
+        bad_1 = cos2_1[cos2_1 <= mean_cos2_1]
+        
+        # AXE 2
+        cos2_2 = self.cos2_ind['Axe2'].sort_values(ascending=False)
+        good_2 = cos2_2[cos2_2 > mean_cos2_2]
+        bad_2 = cos2_2[cos2_2 <= mean_cos2_2]
+        
+        # ===== BONNE QUALITÉ =====
+        fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, max(10, len(good_1)*0.25)))
+        
+        # Axe 1
+        y_pos1 = np.arange(len(good_1))
+        colors1 = plt.cm.YlGn(np.linspace(0.4, 0.95, len(good_1)))
+        
+        ax1.barh(y_pos1, good_1.values, color=colors1,
+                edgecolor='black', linewidth=1.0, alpha=0.85)
+        ax1.set_yticks(y_pos1)
+        ax1.set_yticklabels(good_1.index, fontsize=8, fontweight='bold')
+        ax1.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax1.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax1.set_title(f'Individus BONNE Qualité Axe 1 (Cos²)\n({len(good_1)} individus > moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax1.invert_yaxis()
+        ax1.grid(axis='x', alpha=0.3)
+        ax1.axvline(mean_cos2_1, color='darkgreen', linestyle='--', linewidth=2.5,
+                   label=f'Moyenne = {mean_cos2_1:.3f}', alpha=0.8)
+        ax1.legend(fontsize=10)
+        
+        # Axe 2
+        y_pos2 = np.arange(len(good_2))
+        colors2 = plt.cm.YlGn(np.linspace(0.4, 0.95, len(good_2)))
+        
+        ax2.barh(y_pos2, good_2.values, color=colors2,
+                edgecolor='black', linewidth=1.0, alpha=0.85)
+        ax2.set_yticks(y_pos2)
+        ax2.set_yticklabels(good_2.index, fontsize=8, fontweight='bold')
+        ax2.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax2.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax2.set_title(f'Individus BONNE Qualité Axe 2 (Cos²)\n({len(good_2)} individus > moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax2.invert_yaxis()
+        ax2.grid(axis='x', alpha=0.3)
+        ax2.axvline(mean_cos2_2, color='darkgreen', linestyle='--', linewidth=2.5,
+                   label=f'Moyenne = {mean_cos2_2:.3f}', alpha=0.8)
+        ax2.legend(fontsize=10)
+        
+        plt.tight_layout()
+        f1 = f"{self.dossier}/07_Individus_Cos2/individus_BONNE_qualite_cos2.png"
+        plt.savefig(f1, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f1}")
+        plt.close()
+        
+        # ===== MAUVAISE QUALITÉ (TOP 50) =====
+        fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(22, 14))
+        
+        bad_1_top = bad_1.head(50)
+        bad_2_top = bad_2.head(50)
+        
+        # Axe 1
+        y_pos3 = np.arange(len(bad_1_top))
+        colors3 = plt.cm.OrRd(np.linspace(0.3, 0.7, len(bad_1_top)))
+        
+        ax3.barh(y_pos3, bad_1_top.values, color=colors3,
+                edgecolor='black', linewidth=0.8, alpha=0.7)
+        ax3.set_yticks(y_pos3)
+        ax3.set_yticklabels(bad_1_top.index, fontsize=7)
+        ax3.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax3.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax3.set_title(f'Individus MAUVAISE Qualité Axe 1 (TOP 50)\n({len(bad_1)} total ≤ moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax3.invert_yaxis()
+        ax3.grid(axis='x', alpha=0.3)
+        ax3.axvline(mean_cos2_1, color='red', linestyle='--', linewidth=2,
+                   label=f'Moyenne = {mean_cos2_1:.3f}', alpha=0.8)
+        ax3.legend(fontsize=10)
+        
+        # Axe 2
+        y_pos4 = np.arange(len(bad_2_top))
+        colors4 = plt.cm.OrRd(np.linspace(0.3, 0.7, len(bad_2_top)))
+        
+        ax4.barh(y_pos4, bad_2_top.values, color=colors4,
+                edgecolor='black', linewidth=0.8, alpha=0.7)
+        ax4.set_yticks(y_pos4)
+        ax4.set_yticklabels(bad_2_top.index, fontsize=7)
+        ax4.set_xlabel('Cos²', fontweight='bold', fontsize=12)
+        ax4.set_ylabel('Individus', fontweight='bold', fontsize=12)
+        ax4.set_title(f'Individus MAUVAISE Qualité Axe 2 (TOP 50)\n({len(bad_2)} total ≤ moyenne)',
+                     fontweight='bold', fontsize=13)
+        ax4.invert_yaxis()
+        ax4.grid(axis='x', alpha=0.3)
+        ax4.axvline(mean_cos2_2, color='red', linestyle='--', linewidth=2,
+                   label=f'Moyenne = {mean_cos2_2:.3f}', alpha=0.8)
+        ax4.legend(fontsize=10)
+        
+        plt.tight_layout()
+        f2 = f"{self.dossier}/07_Individus_Cos2/individus_MAUVAISE_qualite_cos2_top50.png"
+        plt.savefig(f2, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Sauvegardé: {f2}")
+        plt.close()
+        
+        print(f"  ✓ Axe 1: {len(good_1)} bonne qualité, {len(bad_1)} mauvaise qualité")
+        print(f"  ✓ Axe 2: {len(good_2)} bonne qualité, {len(bad_2)} mauvaise qualité")
+    
+    # ========================================================================
+    # EXPORT CSV COMPLET
+    # ========================================================================
+    
+    def export_resultats_complets(self):
+        """Export CSV de tous les résultats"""
+        print("\n8. Export CSV complet...")
+        
+        dossier = f"{self.dossier}/08_Export_CSV"
+        Path(dossier).mkdir(parents=True, exist_ok=True)
+        
+        # ===== 1. INDIVIDUS =====
+        df_ind = pd.DataFrame({
+            'Individu': self.coord_ind.index,
+            'Coord_Axe1': self.coord_ind['Axe1'].values,
+            'Coord_Axe2': self.coord_ind['Axe2'].values,
+            'Contrib_Axe1': self.ctr_ind['Axe1'].values,
+            'Contrib_Axe2': self.ctr_ind['Axe2'].values,
+            'Contrib_Totale': (self.ctr_ind['Axe1'] + self.ctr_ind['Axe2']).values,
+            'Cos2_Axe1': self.cos2_ind['Axe1'].values,
+            'Cos2_Axe2': self.cos2_ind['Axe2'].values,
+            'Cos2_Total': (self.cos2_ind['Axe1'] + self.cos2_ind['Axe2']).values
+        })
+        df_ind = df_ind.sort_values('Contrib_Totale', ascending=False)
+        
+        f1 = f"{dossier}/individus_complet.csv"
+        df_ind.to_csv(f1, index=False)
+        print(f"  ✓ Individus: {f1}")
+        
+        # ===== 2. MODALITÉS =====
+        df_mod = pd.DataFrame({
+            'Modalite': self.coord_mod.index,
+            'Coord_Axe1': self.coord_mod['Axe1'].values,
+            'Coord_Axe2': self.coord_mod['Axe2'].values,
+            'Contrib_Axe1': self.ctr_mod['Axe1'].values,
+            'Contrib_Axe2': self.ctr_mod['Axe2'].values,
+            'Contrib_Totale': (self.ctr_mod['Axe1'] + self.ctr_mod['Axe2']).values,
+            'Cos2_Axe1': self.cos2_mod['Axe1'].values,
+            'Cos2_Axe2': self.cos2_mod['Axe2'].values,
+            'Cos2_Total': (self.cos2_mod['Axe1'] + self.cos2_mod['Axe2']).values,
+            'Effectif': self.n_j.values
+        })
+        df_mod = df_mod.sort_values('Contrib_Totale', ascending=False)
+        
+        f2 = f"{dossier}/modalites_complet.csv"
+        df_mod.to_csv(f2, index=False)
+        print(f"  ✓ Modalités: {f2}")
+        
+        # ===== 3. VALEURS PROPRES =====
+        df_vp = pd.DataFrame({
+            'Axe': [f'Axe {k+1}' for k in range(len(self.lambda_k))],
+            'Lambda_Original': self.lambda_k,
+            'Lambda_Benzecri': self.lambda_corr,
+            'Inertie_Pct_Original': self.inertie_pct,
+            'Inertie_Pct_Benzecri': self.inertie_corr_pct,
+            'Inertie_Cum_Original': self.inertie_cum,
+            'Inertie_Cum_Benzecri': self.inertie_corr_cum
+        })
+        
+        f3 = f"{dossier}/valeurs_propres.csv"
+        df_vp.to_csv(f3, index=False)
+        print(f"  ✓ Valeurs propres: {f3}")
+        
+        print(f"  ✓ 3 fichiers CSV exportés dans {dossier}/")
+    
+    # ========================================================================
+    # RAPPORT COMPLET
+    # ========================================================================
     
     def rapport_complet(self):
         """Génère tous les graphiques"""
         print("\n" + "="*80)
-        print("GÉNÉRATION RAPPORT COMPLET")
+        print("GÉNÉRATION RAPPORT COMPLET ACM")
         print("="*80 + "\n")
         
         print("0. Correction de Benzécri...")
@@ -947,35 +1010,15 @@ class ACM_BreastCancer:
         print("\n2. Graphe par variable...")
         self.plot_par_variable()
         
-        print("\n3. Biplot (Top 15)...")
+        print("\n3. Biplot complet...")
         self.plot_biplot()
         
-        print("\n4. Individus - Contribution...")
-        self.plot_ind_ctr()
-        
-        print("\n5. Individus - Cos²...")
-        self.plot_ind_cos()
-        
-        print("\n6. Modalités - Cos²...")
-        self.plot_mod_cos()
-        
-        print("\n7. Modalités - Contribution...")
-        self.plot_mod_ctr()
-        
-        print("\n8. Modalités colorées par contribution...")
-        self.plot_modalites_contribution()
-        
-        print("\n9. Cercle de corrélation...")
-        self.plot_cercle_correlation()
-        
-        print("\n10. Histogrammes des variables...")
-        self.plot_histogrammes_variables()
-        
-        print("\n11. Biplot complet...")
-        self.plot_biplot_complet()
-        
-        print("\n12. Contributions individus par axes...")
-        self.plot_contributions_individus_axes()
+        # Nouveaux graphiques améliorés
+        self.plot_modalites_contributions_axes()
+        self.plot_modalites_cos2_axes()
+        self.plot_individus_contributions_intelligents()
+        self.plot_individus_cos2_intelligents()
+        self.export_resultats_complets()
         
         print("\n" + "="*80)
         print("✓ RAPPORT COMPLET GÉNÉRÉ")
@@ -1014,45 +1057,51 @@ if __name__ == "__main__":
     
     # ÉTAPE 3: Résultats numériques
     print("\n" + "="*80)
-    print("RÉSULTATS NUMÉRIQUES")
+    print("RÉSULTATS NUMÉRIQUES - RÉSUMÉ")
     print("="*80 + "\n")
     
-    print("=" * 60)
-    print("CORRECTION DE BENZÉCRI - RÉSUMÉ")
-    print("=" * 60)
+    print("=" * 70)
+    print("CORRECTION DE BENZÉCRI")
+    print("=" * 70)
     print(f"Inertie totale originale : {acm.I_tot:.4f}")
     print(f"Inertie totale corrigée  : {acm.I_corr:.4f}")
     print(f"Seuil 1/p : {1/acm.p:.4f}\n")
     
-    print("=" * 60)
-    print("TOP 10 MODALITÉS - CONTRIBUTION AXE 1")
-    print("=" * 60)
-    print(acm.ctr_mod['Axe1'].sort_values(ascending=False).head(10))
+    print("=" * 70)
+    print("TOP 10 MODALITÉS - CONTRIBUTION TOTALE (AXE 1 + AXE 2)")
+    print("=" * 70)
+    contrib_mod_tot = acm.ctr_mod['Axe1'] + acm.ctr_mod['Axe2']
+    print(contrib_mod_tot.sort_values(ascending=False).head(10))
     
-    print("\n" + "=" * 60)
-    print("TOP 10 MODALITÉS - CONTRIBUTION AXE 2")
-    print("=" * 60)
-    print(acm.ctr_mod['Axe2'].sort_values(ascending=False).head(10))
+    print("\n" + "=" * 70)
+    print("TOP 10 INDIVIDUS - CONTRIBUTION TOTALE (AXE 1 + AXE 2)")
+    print("=" * 70)
+    contrib_ind_tot = acm.ctr_ind['Axe1'] + acm.ctr_ind['Axe2']
+    print(contrib_ind_tot.sort_values(ascending=False).head(10))
     
-    print("\n" + "=" * 60)
-    print("TOP 10 MODALITÉS - COS² (AXE1+AXE2)")
-    print("=" * 60)
-    cos2_tot = acm.cos2_mod['Axe1'] + acm.cos2_mod['Axe2']
-    print(cos2_tot.sort_values(ascending=False).head(10))
-    
-    print("\n" + "=" * 60)
-    print("TOP 10 INDIVIDUS - CONTRIBUTION AXE 1")
-    print("=" * 60)
-    print(acm.ctr_ind['Axe1'].sort_values(ascending=False).head(10))
-    
-    print("\n" + "=" * 60)
-    print("TOP 10 INDIVIDUS - CONTRIBUTION AXE 2")
-    print("=" * 60)
-    print(acm.ctr_ind['Axe2'].sort_values(ascending=False).head(10))
+    print("\n" + "=" * 70)
+    print("STATISTIQUES CONTRIBUTIONS INDIVIDUS")
+    print("=" * 70)
+    mean_contrib_1 = 100 / acm.n
+    mean_contrib_2 = 100 / acm.n
+    high_1 = (acm.ctr_ind['Axe1'] > mean_contrib_1).sum()
+    high_2 = (acm.ctr_ind['Axe2'] > mean_contrib_2).sum()
+    print(f"Axe 1: {high_1} individus > moyenne ({mean_contrib_1:.3f}%)")
+    print(f"Axe 2: {high_2} individus > moyenne ({mean_contrib_2:.3f}%)")
+    print(f"Total individus: {acm.n}")
     
     print("\n" + "="*80)
     print("✓ ANALYSE ACM TERMINÉE AVEC SUCCÈS")
     print(f"✓ Fichier nettoyé: {fichier_clean}")
-    print(f"✓ Graphiques disponibles dans: {acm.dossier}/")
-    print(f"✓ Total graphiques générés: 13 (dont correction Benzécri)")
+    print(f"✓ Graphiques: {acm.dossier}/")
+    print(f"✓ Structure:")
+    print(f"  - 00_Benzecri/")
+    print(f"  - 01_Scree_Plot/")
+    print(f"  - 02_Graphe_par_variable/")
+    print(f"  - 03_Biplot/")
+    print(f"  - 04_Modalites_Contributions/")
+    print(f"  - 05_Modalites_Cos2/")
+    print(f"  - 06_Individus_Contributions/")
+    print(f"  - 07_Individus_Cos2/")
+    print(f"  - 08_Export_CSV/")
     print("="*80)
